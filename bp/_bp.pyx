@@ -46,6 +46,24 @@ cdef inline int max(int a, int b) nogil:
         return b
 
 
+cdef inline int _excess_from_block_seed(BP self, SIZE_t i) nogil:
+    cdef SIZE_t k
+    cdef SIZE_t node
+    cdef SIZE_t s
+    cdef SIZE_t j
+    cdef int excess
+
+    k = i // self._rmm.b
+    node = self._rmm.n_internal + k
+    s = k * self._rmm.b
+    excess = (2 * self._rmm.r[node]) - s
+
+    for j in range(s, i + 1):
+        excess += -1 + (2 * self._b_ptr[j])
+
+    return excess
+
+
 cdef class mM:
     def __cinit__(self, BOOL_t[:] B, int B_size):
         self.m_idx = 0
@@ -1017,7 +1035,7 @@ cdef class BP:
         k = i // self._rmm.b  
 
         # desired excess
-        d += self.excess(i)
+        d += _excess_from_block_seed(self, i)
 
         # determine which node our block corresponds too
         node = bt_node_from_left(k, self._rmm.height)
@@ -1079,7 +1097,7 @@ cdef class BP:
         k = i // self._rmm.b  
         
         # desired excess
-        d += self.excess(i)
+        d += _excess_from_block_seed(self, i)
 
         # see if our result is in our current block
         result = self.scan_block_backward(i, k, self._rmm.b, d)
