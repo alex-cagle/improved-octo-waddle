@@ -961,6 +961,7 @@ cdef class BP:
         cdef int lower_bound
         cdef int upper_bound
         cdef int j
+        cdef int excess
         
         # i and k are currently needed to handle the situation where 
         # k_start < i < k_end. It should be possible to resolve using partial 
@@ -985,9 +986,11 @@ cdef class BP:
         if upper_bound <= 0:
             return -1
 
+        excess = self.excess(upper_bound)
         for j in range(upper_bound, lower_bound, -1):
-            if self.excess(j) == d:
+            if excess == d:
                 return j
+            excess -= -1 + (2 * self._b_ptr[j])
 
         return -1
 
@@ -1132,4 +1135,3 @@ cdef class BP:
 #   - necessary for mincount/minselect
 ###
 ###
-
