@@ -437,7 +437,7 @@ cdef class BP:
 
     cpdef SIZE_t depth(self, SIZE_t i) nogil:
         """The depth of node i"""
-        return self._e_index[i]
+        return self.excess(i)
 
     cpdef SIZE_t root(self) nogil:
         """The root of the tree"""
@@ -926,7 +926,7 @@ cdef class BP:
         upper_bound = min((k + 1) * b, self.size)
 
         for j in range(lower_bound, upper_bound):
-            if self._e_index[j] == d:
+            if self.excess(j) == d:
                 return j
         
         return -1
@@ -1007,7 +1007,7 @@ cdef class BP:
         k = i // self._rmm.b  
 
         # desired excess
-        d += self._e_index[i]
+        d += self.excess(i)
 
         # determine which node our block corresponds too
         node = bt_node_from_left(k, self._rmm.height)
