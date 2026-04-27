@@ -917,6 +917,7 @@ cdef class BP:
         cdef int lower_bound
         cdef int upper_bound
         cdef int j
+        cdef int excess
 
         # lower_bound is block boundary or right of i
         lower_bound = max(k, 0) * b
@@ -925,8 +926,14 @@ cdef class BP:
         # upper_bound is block boundary or end of tree
         upper_bound = min((k + 1) * b, self.size)
 
+        if lower_bound > 0:
+            excess = self.excess(lower_bound - 1)
+        else:
+            excess = 0
+
         for j in range(lower_bound, upper_bound):
-            if self.excess(j) == d:
+            excess += -1 + (2 * self._b_ptr[j])
+            if excess == d:
                 return j
         
         return -1
@@ -1125,6 +1132,4 @@ cdef class BP:
 #   - necessary for mincount/minselect
 ###
 ###
-
-
 
