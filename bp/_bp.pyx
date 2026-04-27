@@ -64,6 +64,65 @@ cdef inline int _excess_from_block_seed(BP self, SIZE_t i) nogil:
     return excess
 
 
+cdef inline int _scan_block_forward_rmm(BP self, int i, int k, int d) nogil:
+    cdef int lower_bound
+    cdef int upper_bound
+    cdef int node
+    cdef int s
+    cdef int j
+    cdef int excess
+
+    s = k * self._rmm.b
+    lower_bound = max(i + 1, s)
+    upper_bound = min((k + 1) * self._rmm.b, self.size)
+
+    node = self._rmm.n_internal + k
+    excess = (2 * self._rmm.r[node]) - s
+
+    for j in range(s, lower_bound):
+        excess += -1 + (2 * self._b_ptr[j])
+
+    for j in range(lower_bound, upper_bound):
+        excess += -1 + (2 * self._b_ptr[j])
+        if excess == d:
+            return j
+
+    return -1
+
+
+cdef inline int _scan_block_backward_rmm(BP self, int i, int k, int d) nogil:
+    cdef int lower_bound
+    cdef int upper_bound
+    cdef int node
+    cdef int s
+    cdef int j
+    cdef int excess
+
+    s = k * self._rmm.b
+    lower_bound = s - 1
+    if lower_bound >= 0:
+        lower_bound -= 1
+
+    upper_bound = min((k + 1) * self._rmm.b, self.size) - 1
+    upper_bound = min(i - 1, upper_bound)
+
+    if upper_bound <= 0:
+        return -1
+
+    node = self._rmm.n_internal + k
+    excess = (2 * self._rmm.r[node]) - s
+
+    for j in range(s, upper_bound + 1):
+        excess += -1 + (2 * self._b_ptr[j])
+
+    for j in range(upper_bound, lower_bound, -1):
+        if excess == d:
+            return j
+        excess -= -1 + (2 * self._b_ptr[j])
+
+    return -1
+
+
 cdef class mM:
     def __cinit__(self, BOOL_t[:] B, int B_size):
         self.m_idx = 0
@@ -1042,7 +1101,7 @@ cdef class BP:
         
         # see if our result is in our current block
         if self._rmm.mM[node, self._rmm.m_idx] <= d <= self._rmm.mM[node, self._rmm.M_idx]:
-            result = self.scan_block_forward(i, k, self._rmm.b, d)
+            result = _scan_block_forward_rmm(self, i, k, d)
         
         # if we do not have a result, we need to begin traversal of the tree
         if result == -1:
@@ -1070,7 +1129,7 @@ cdef class BP:
             k = node - <int>(pow(2, self._rmm.height) - 1)
 
             # scan for a result using the original d
-            result = self.scan_block_forward(i, k, self._rmm.b, d)
+            result = _scan_block_forward_rmm(self, i, k, d)
 
         return result
 
@@ -1100,7 +1159,7 @@ cdef class BP:
         d += _excess_from_block_seed(self, i)
 
         # see if our result is in our current block
-        result = self.scan_block_backward(i, k, self._rmm.b, d)
+        result = _scan_block_backward_rmm(self, i, k, d)
 
         # determine which node our block corresponds too
         node = bt_node_from_left(k, self._rmm.height)
@@ -1109,7 +1168,7 @@ cdef class BP:
         if result == -1 and bt_is_right_child(node):
             node = bt_left_sibling(node)
             k = node - <int>(pow(2, self._rmm.height) - 1)
-            result = self.scan_block_backward(i, k, self._rmm.b, d)
+            result = _scan_block_backward_rmm(self, i, k, d)
         
            # reset node and k in the event that result == -1
             k = i // self._rmm.b
@@ -1145,7 +1204,7 @@ cdef class BP:
             k = node - <int>(pow(2, self._rmm.height) - 1)
 
             # scan for a result
-            result = self.scan_block_backward(i, k, self._rmm.b, d)
+            result = _scan_block_backward_rmm(self, i, k, d)
             
         return result
 
