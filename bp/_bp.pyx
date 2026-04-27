@@ -1004,7 +1004,7 @@ cdef class BP:
         upper_bound = min((k + 1) * b, self.size)
 
         if lower_bound > 0:
-            excess = self.excess(lower_bound - 1)
+            excess = _excess_from_block_seed(self, lower_bound - 1)
         else:
             excess = 0
 
@@ -1063,7 +1063,7 @@ cdef class BP:
         if upper_bound <= 0:
             return -1
 
-        excess = self.excess(upper_bound)
+        excess = _excess_from_block_seed(self, upper_bound)
         for j in range(upper_bound, lower_bound, -1):
             if excess == d:
                 return j
