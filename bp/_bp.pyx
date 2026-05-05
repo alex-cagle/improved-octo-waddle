@@ -30,6 +30,7 @@ DOUBLE = np.float64
 SIZE = np.intp
 BOOL = np.uint8
 INT32 = np.int32
+cdef int RMQ_SUBTREE_THRESHOLD = 8
 
 
 cdef inline int min(int a, int b) nogil:
@@ -157,6 +158,69 @@ cdef inline SIZE_t _rMq_scan_range(BP self, SIZE_t lo, SIZE_t hi, int* max_v) no
             max_k = pos
 
     return max_k
+
+
+cdef void _rmq_find_best_middle_cover_node(BP self, SIZE_t query_left,
+                                           SIZE_t query_right,
+                                           SIZE_t* best_node,
+                                           int* best_min) nogil:
+    cdef SIZE_t left_nodes[128]
+    cdef SIZE_t right_nodes[128]
+    cdef SIZE_t left_count = 0
+    cdef SIZE_t right_count = 0
+    cdef SIZE_t base
+    cdef SIZE_t l
+    cdef SIZE_t r
+    cdef SIZE_t node
+    cdef SIZE_t idx
+    cdef int node_min
+
+    base = self._rmm.n_internal + 1
+    l = base + query_left
+    r = base + query_right
+
+    while l <= r:
+        if l % 2 == 1:
+            left_nodes[left_count] = l - 1
+            left_count += 1
+            l += 1
+
+        if r % 2 == 0:
+            right_nodes[right_count] = r - 1
+            right_count += 1
+            r -= 1
+
+        l //= 2
+        r //= 2
+
+    for idx in range(left_count):
+        node = left_nodes[idx]
+        node_min = <int>self._rmm.mM[node, self._rmm.m_idx]
+        if node_min < best_min[0]:
+            best_min[0] = node_min
+            best_node[0] = node
+
+    while right_count > 0:
+        right_count -= 1
+        node = right_nodes[right_count]
+        node_min = <int>self._rmm.mM[node, self._rmm.m_idx]
+        if node_min < best_min[0]:
+            best_min[0] = node_min
+            best_node[0] = node
+
+
+cdef inline SIZE_t _rmq_descend_leftmost_leaf(BP self, SIZE_t node,
+                                              int target_min) nogil:
+    cdef SIZE_t left_child
+
+    while not bt_is_leaf(node, self._rmm.height):
+        left_child = bt_left_child(node)
+        if self._rmm.mM[left_child, self._rmm.m_idx] == target_min:
+            node = left_child
+        else:
+            node = bt_right_child(node)
+
+    return node
 
 
 cdef class mM:
@@ -488,6 +552,9 @@ cdef class BP:
             SIZE_t first_block, last_block
             SIZE_t first_block_end, last_block_start, block_end
             SIZE_t leaf
+            SIZE_t best_node
+            SIZE_t mid_left, mid_right
+            SIZE_t middle_blocks
             int min_v, obs_v
 
         first_block = i // self._rmm.b
@@ -499,14 +566,35 @@ cdef class BP:
         first_block_end = min((first_block + 1) * self._rmm.b, self.size) - 1
         min_k = _rmq_scan_range(self, i, first_block_end, &min_v)
 
-        for k in range(first_block + 1, last_block):
-            leaf = self._rmm.n_internal + k
-            obs_v = <int>self._rmm.mM[leaf, self._rmm.m_idx]
-            if obs_v < min_v:
-                block_end = min((k + 1) * self._rmm.b, self.size) - 1
-                obs_k = _rmq_scan_range(self, k * self._rmm.b, block_end, &obs_v)
-                min_k = obs_k
-                min_v = obs_v
+        if first_block + 1 <= last_block - 1:
+            mid_left = first_block + 1
+            mid_right = last_block - 1
+            middle_blocks = mid_right - mid_left + 1
+
+            if middle_blocks < RMQ_SUBTREE_THRESHOLD:
+                for k in range(mid_left, mid_right + 1):
+                    leaf = self._rmm.n_internal + k
+                    obs_v = <int>self._rmm.mM[leaf, self._rmm.m_idx]
+                    if obs_v < min_v:
+                        block_end = min((k + 1) * self._rmm.b, self.size) - 1
+                        obs_k = _rmq_scan_range(self, k * self._rmm.b, block_end,
+                                                &obs_v)
+                        min_k = obs_k
+                        min_v = obs_v
+            else:
+                best_node = -1
+                obs_v = min_v
+
+                _rmq_find_best_middle_cover_node(self, mid_left, mid_right,
+                                                 &best_node, &obs_v)
+
+                if best_node != -1:
+                    leaf = _rmq_descend_leftmost_leaf(self, best_node, obs_v)
+                    k = leaf - self._rmm.n_internal
+                    block_end = min((k + 1) * self._rmm.b, self.size) - 1
+                    obs_k = _rmq_scan_range(self, k * self._rmm.b, block_end, &obs_v)
+                    min_k = obs_k
+                    min_v = obs_v
 
         last_block_start = last_block * self._rmm.b
         obs_k = _rmq_scan_range(self, last_block_start, j, &obs_v)
