@@ -30,6 +30,11 @@ cdef class BP:
     cdef:
         public np.ndarray B 
         BOOL_t* _b_ptr
+        int beta
+        int n_buckets
+        SIZE_t[:] bucket_e
+        SIZE_t[:] bucket_m
+        SIZE_t[:] bucket_M
         SIZE_t[:] _k_index_0
         SIZE_t[:] _k_index_1
         np.ndarray _names

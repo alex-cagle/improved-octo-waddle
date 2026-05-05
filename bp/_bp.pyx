@@ -30,6 +30,7 @@ DOUBLE = np.float64
 SIZE = np.intp
 BOOL = np.uint8
 INT32 = np.int32
+DEF BUCKET_SIZE = 1 << 15
 DEF RMQ_MAX_COVER_NODES = 128
 cdef int RMQ_SUBTREE_THRESHOLD = 8
 
@@ -424,20 +425,58 @@ cdef class BP:
                   np.ndarray[INT32_t, ndim=1] edges=None):
         cdef SIZE_t i
         cdef SIZE_t size
+        cdef SIZE_t j
+        cdef SIZE_t bucket_idx
+        cdef SIZE_t bucket_start
+        cdef SIZE_t bucket_end
         cdef SIZE_t[:] _k_index_0
         cdef SIZE_t[:] _k_index_1
         cdef SIZE_t[:] _r_index_0
         cdef SIZE_t[:] _r_index_1
+        cdef SIZE_t[:] bucket_e
+        cdef SIZE_t[:] bucket_m
+        cdef SIZE_t[:] bucket_M
         cdef np.ndarray[object, ndim=1] _names
         cdef np.ndarray[DOUBLE_t, ndim=1] _lengths
         cdef np.ndarray[INT32_t, ndim=1] _edges
         cdef np.ndarray[SIZE_t, ndim=1] _edge_lookup
+        cdef int excess
+        cdef int bucket_min
+        cdef int bucket_max
 
         # the tree is only valid if it is balanaced
         assert B.sum() == (float(B.size) / 2)
         self.B = B
         self._b_ptr = &B[0]
         self.size = B.size
+        self.beta = BUCKET_SIZE
+        self.n_buckets = max(1, <int>ceil(self.size / <double> self.beta))
+
+        bucket_e = np.zeros(self.n_buckets, dtype=SIZE)
+        bucket_m = np.zeros(self.n_buckets, dtype=SIZE)
+        bucket_M = np.zeros(self.n_buckets, dtype=SIZE)
+
+        excess = 0
+        for bucket_idx in range(self.n_buckets):
+            bucket_start = bucket_idx * self.beta
+            bucket_end = min((bucket_idx + 1) * self.beta, self.size) - 1
+            bucket_min = INT_MAX
+            bucket_max = 0
+
+            for j in range(bucket_start, bucket_end + 1):
+                excess += -1 + (2 * self._b_ptr[j])
+                if excess < bucket_min:
+                    bucket_min = excess
+                if excess > bucket_max:
+                    bucket_max = excess
+
+            bucket_e[bucket_idx] = excess
+            bucket_m[bucket_idx] = bucket_min
+            bucket_M[bucket_idx] = bucket_max
+
+        self.bucket_e = bucket_e
+        self.bucket_m = bucket_m
+        self.bucket_M = bucket_M
 
         self._rmm = mM(B, B.size)
 

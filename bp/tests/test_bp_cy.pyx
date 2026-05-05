@@ -12,6 +12,15 @@ def get_test_obj():
     return BP(fig1_B)
 
 
+def get_bucket_summaries(np.ndarray[np.uint8_t, ndim=1] B):
+    cdef BP obj = BP(B)
+    return (obj.beta,
+            obj.n_buckets,
+            np.asarray(obj.bucket_e),
+            np.asarray(obj.bucket_m),
+            np.asarray(obj.bucket_M))
+
+
 def test_rank():
     cdef BP obj = get_test_obj()
     counts_1 = fig1_B.cumsum()
