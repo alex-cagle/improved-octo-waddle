@@ -182,7 +182,7 @@ cdef class mM:
         cdef int r = 0
 
         # build tip info
-        self.b = <int>ceil(ln(<double> B_size) * ln(ln(<double> B_size)))
+        self.b = max(1, <int>ceil(ln(<double> B_size) * ln(ln(<double> B_size))))
 
         # determine the number of nodes and height of the binary tree
         self.n_tip = <int>ceil(B_size / <double> self.b)

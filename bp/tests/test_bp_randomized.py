@@ -157,12 +157,6 @@ def sample_search_deltas(B, i, rng):
 def test_randomized_reference_correctness(n):
     rng = random.Random(SEED + n)
 
-    if n == 1:
-        B = generate_balanced_parentheses(n, rng)
-        with pytest.raises(ValueError, match="negative dimensions"):
-            BP(B)
-        pytest.xfail("Current BP rmM constructor does not support n=1 trees")
-
     for _ in range(CASES_PER_N):
         B = generate_balanced_parentheses(n, rng)
         bp = BP(B)

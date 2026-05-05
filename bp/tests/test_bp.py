@@ -138,6 +138,18 @@ class BPTests(TestCase):
         for (i, j, q), e in exp.items():
             self.assertEqual(self.BP.minselect(i, j, q), e)
 
+    def test_tiny_tree(self):
+        bp = BP(np.array([1, 0], dtype=np.uint8))
+
+        self.assertEqual(bp.depth(0), 1)
+        self.assertEqual(bp.depth(1), 0)
+        self.assertEqual(bp.close(0), 1)
+        self.assertEqual(bp.rmq(0, 1), 1)
+        self.assertEqual(bp.rMq(0, 1), 0)
+        self.assertEqual(bp.mincount(0, 1), 1)
+        self.assertEqual(bp.minselect(0, 1, 1), 1)
+        self.assertIsNone(bp.minselect(0, 1, 2))
+
     def test_preorder(self):
         exp = [1, 2, 3, 3, 4, 4, 5, 6, 6, 5, 2, 7, 7, 8, 9, 10, 10, 11, 11, 9, 8, 1]
         for i, e in enumerate(exp):
