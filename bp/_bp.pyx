@@ -292,7 +292,6 @@ cdef class BP:
                   np.ndarray[INT32_t, ndim=1] edges=None):
         cdef SIZE_t i
         cdef SIZE_t size
-        cdef SIZE_t[:] _e_index
         cdef SIZE_t[:] _k_index_0
         cdef SIZE_t[:] _k_index_1
         cdef SIZE_t[:] _r_index_0
@@ -340,14 +339,6 @@ cdef class BP:
         _k_index_1 = np.unique(_r_index_1,
                                return_index=True)[1].astype(SIZE)
         self._k_index_1 = _k_index_1
-
-        # construct an excess index. These operations are performed a lot, and
-        # similarly can to rank and select, can be cached at a minimal expense.
-        #TODO: leverage rmm tree, and calculate excess on the fly
-        _e_index = np.empty(B.size, dtype=SIZE)
-        for i in range(B.size):
-            _e_index[i] = self._excess(i)
-        self._e_index = _e_index
 
     def write(self, object fname):
         np.savez_compressed(fname, names=self._names, lengths=self._lengths, 
