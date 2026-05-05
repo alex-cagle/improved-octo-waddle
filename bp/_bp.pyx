@@ -464,7 +464,7 @@ cdef class BP:
     cdef SIZE_t excess(self, SIZE_t i) nogil:
         """the number of opening minus closing parentheses in B[1, i]"""
         # same as: self.rank(1, i) - self.rank(0, i)
-        return self._e_index[i]
+        return _excess_from_block_seed(self, i)
     
     cpdef inline SIZE_t close(self, SIZE_t i) nogil:
         """The position of the closing parenthesis that matches B[i]"""
