@@ -30,6 +30,7 @@ DOUBLE = np.float64
 SIZE = np.intp
 BOOL = np.uint8
 INT32 = np.int32
+DEF RMQ_MAX_COVER_NODES = 128
 cdef int RMQ_SUBTREE_THRESHOLD = 8
 
 
@@ -164,8 +165,10 @@ cdef void _rmq_find_best_middle_cover_node(BP self, SIZE_t query_left,
                                            SIZE_t query_right,
                                            SIZE_t* best_node,
                                            int* best_min) nogil:
-    cdef SIZE_t left_nodes[128]
-    cdef SIZE_t right_nodes[128]
+    # Each side of the canonical cover contributes at most one node per rmM
+    # tree level, so a fixed per-side bound is sufficient here.
+    cdef SIZE_t left_nodes[RMQ_MAX_COVER_NODES]
+    cdef SIZE_t right_nodes[RMQ_MAX_COVER_NODES]
     cdef SIZE_t left_count = 0
     cdef SIZE_t right_count = 0
     cdef SIZE_t base
