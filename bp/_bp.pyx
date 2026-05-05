@@ -123,6 +123,24 @@ cdef inline int _scan_block_backward_rmm(BP self, int i, int k, int d) nogil:
     return -1
 
 
+cdef inline SIZE_t _rmq_scan_range(BP self, SIZE_t lo, SIZE_t hi, int* min_v) nogil:
+    cdef SIZE_t pos
+    cdef SIZE_t min_k
+    cdef int excess
+
+    min_k = lo
+    excess = _excess_from_block_seed(self, lo)
+    min_v[0] = excess
+
+    for pos in range(lo + 1, hi + 1):
+        excess += -1 + (2 * self._b_ptr[pos])
+        if excess < min_v[0]:
+            min_v[0] = excess
+            min_k = pos
+
+    return min_k
+
+
 cdef class mM:
     def __cinit__(self, BOOL_t[:] B, int B_size):
         self.m_idx = 0
@@ -457,16 +475,36 @@ cdef class BP:
     cpdef SIZE_t rmq(self, SIZE_t i, SIZE_t j) nogil:
         """The leftmost minimum excess in i -> j"""
         cdef:
-            SIZE_t k, min_k
-            SIZE_t min_v, obs_v
+            SIZE_t k, min_k, obs_k
+            SIZE_t first_block, last_block
+            SIZE_t first_block_end, last_block_start, block_end
+            SIZE_t leaf
+            int min_v, obs_v
 
-        min_k = i
-        min_v = self.excess(i)  # a value larger than what will be tested
-        for k in range(i, j + 1):
-            obs_v = self.excess(k)
+        first_block = i // self._rmm.b
+        last_block = j // self._rmm.b
+
+        if first_block == last_block:
+            return _rmq_scan_range(self, i, j, &min_v)
+
+        first_block_end = min((first_block + 1) * self._rmm.b, self.size) - 1
+        min_k = _rmq_scan_range(self, i, first_block_end, &min_v)
+
+        for k in range(first_block + 1, last_block):
+            leaf = self._rmm.n_internal + k
+            obs_v = <int>self._rmm.mM[leaf, self._rmm.m_idx]
             if obs_v < min_v:
-                min_k = k
+                block_end = min((k + 1) * self._rmm.b, self.size) - 1
+                obs_k = _rmq_scan_range(self, k * self._rmm.b, block_end, &obs_v)
+                min_k = obs_k
                 min_v = obs_v
+
+        last_block_start = last_block * self._rmm.b
+        obs_k = _rmq_scan_range(self, last_block_start, j, &obs_v)
+        if obs_v < min_v:
+            min_k = obs_k
+            min_v = obs_v
+
         return min_k
 
     cpdef SIZE_t rMq(self, SIZE_t i, SIZE_t j) nogil:
