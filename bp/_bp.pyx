@@ -642,8 +642,26 @@ cdef class BP:
 
     def mincount(self, SIZE_t i, SIZE_t j):
         """number of occurrences of the minimum in excess(i), excess(i + 1), . . . , excess(j)."""
-        excess, counts = np.unique([self.excess(k) for k in range(i, j + 1)], return_counts=True)
-        return counts[excess.argmin()]
+        cdef SIZE_t pos
+        cdef SIZE_t min_pos
+        cdef SIZE_t count
+        cdef int min_v
+        cdef int excess
+
+        min_pos = self.rmq(i, j)
+        min_v = _excess_from_block_seed(self, min_pos)
+        excess = _excess_from_block_seed(self, i)
+        count = 0
+
+        if excess == min_v:
+            count += 1
+
+        for pos in range(i + 1, j + 1):
+            excess += -1 + (2 * self._b_ptr[pos])
+            if excess == min_v:
+                count += 1
+
+        return count
 
     def minselect(self, SIZE_t i, SIZE_t j, SIZE_t q):
         """position of the qth minimum in excess(i), excess(i + 1), . . . , excess(j)."""
