@@ -200,3 +200,142 @@ def test_minselect_q_behavior_across_block_boundaries():
     assert bp.minselect(lo, hi, 1) == minselect_ref(B, lo, hi, 1)
     assert bp.minselect(lo, hi, count) == minselect_ref(B, lo, hi, count)
     assert bp.minselect(lo, hi, count + 1) is None
+
+
+def test_no_middle_full_blocks_cases():
+    B = mixed_bits(CASE_NS["just_above"])
+    size = len(B)
+    b = rmm_block_size(size)
+    bp = BP(B)
+
+    intervals = [
+        (b - 1, b + 1),
+        (0, b),
+        (size - b - 1, size - 1),
+    ]
+
+    for i, j in intervals:
+        first_block = i // b
+        last_block = j // b
+        assert last_block <= first_block + 1
+        assert bp.rmq(i, j) == rmq_ref(B, i, j)
+        assert bp.rMq(i, j) == rMq_ref(B, i, j)
+
+
+def test_exactly_one_middle_full_block_case():
+    B = mixed_bits(CASE_NS["final_partial"])
+    size = len(B)
+    b = rmm_block_size(size)
+    bp = BP(B)
+
+    i = 1
+    j = min(size - 1, (2 * b))
+    first_block = i // b
+    last_block = j // b
+
+    assert (last_block - first_block - 1) == 1
+    assert bp.rmq(i, j) == rmq_ref(B, i, j)
+    assert bp.rMq(i, j) == rMq_ref(B, i, j)
+
+
+def test_winning_region_cases_for_rmq():
+    for B in (
+        nested_bits(CASE_NS["final_partial"]),
+        flat_bits(CASE_NS["final_partial"]),
+        mixed_bits(CASE_NS["final_partial"]),
+    ):
+        size = len(B)
+        b = rmm_block_size(size)
+        bp = BP(B)
+
+        intervals = [
+            (0, min(size - 1, (2 * b) + 1)),
+            (b - 1, min(size - 1, (3 * b))),
+            (max(0, size - (2 * b) - 1), size - 1),
+        ]
+
+        saw_first = False
+        saw_middle = False
+        saw_last = False
+
+        for i, j in intervals:
+            exp = rmq_ref(B, i, j)
+            obs = bp.rmq(i, j)
+            assert obs == exp
+
+            first_block = i // b
+            last_block = j // b
+            exp_block = exp // b
+
+            if exp_block == first_block:
+                saw_first = True
+            elif exp_block == last_block:
+                saw_last = True
+            else:
+                saw_middle = True
+
+        assert saw_first or saw_middle or saw_last
+
+
+def test_rmq_ties_across_boundaries():
+    B = flat_bits(CASE_NS["final_partial"])
+    size = len(B)
+    b = rmm_block_size(size)
+    bp = BP(B)
+
+    intervals = [
+        (b - 1, min(size - 1, (2 * b) + 1)),
+        (0, min(size - 1, (3 * b) - 1)),
+        (b, size - 1),
+    ]
+
+    for i, j in intervals:
+        exp = rmq_ref(B, i, j)
+        obs = bp.rmq(i, j)
+        assert obs == exp
+        exp_val = excess_ref(B, exp)
+        for pos in range(i, exp):
+            assert excess_ref(B, pos) > exp_val or pos == exp
+
+
+def test_rMq_ties_across_boundaries():
+    B = flat_bits(CASE_NS["final_partial"])
+    size = len(B)
+    b = rmm_block_size(size)
+    bp = BP(B)
+
+    intervals = [
+        (b - 1, min(size - 1, (2 * b) + 1)),
+        (0, min(size - 1, (3 * b) - 1)),
+        (b, size - 1),
+    ]
+
+    for i, j in intervals:
+        exp = rMq_ref(B, i, j)
+        obs = bp.rMq(i, j)
+        assert obs == exp
+        exp_val = excess_ref(B, exp)
+        for pos in range(i, exp):
+            assert excess_ref(B, pos) < exp_val or pos == exp
+
+
+def test_final_partial_block_crossing_intervals():
+    B = mixed_bits(CASE_NS["final_partial"])
+    size = len(B)
+    b = rmm_block_size(size)
+    bp = BP(B)
+
+    intervals = [
+        (max(0, size - b - 1), size - 1),
+        (max(0, size - (2 * b)), size - 1),
+        (b - 1, size - 1),
+    ]
+
+    for i, j in intervals:
+        assert bp.rmq(i, j) == rmq_ref(B, i, j)
+        assert bp.rMq(i, j) == rMq_ref(B, i, j)
+        assert bp.mincount(i, j) == mincount_ref(B, i, j)
+        count = mincount_ref(B, i, j)
+        assert bp.minselect(i, j, 1) == minselect_ref(B, i, j, 1)
+        assert bp.minselect(i, j, count) == minselect_ref(B, i, j, count)
+        assert bp.minselect(i, j, count + 1) is None
