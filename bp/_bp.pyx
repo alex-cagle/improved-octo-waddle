@@ -141,6 +141,24 @@ cdef inline SIZE_t _rmq_scan_range(BP self, SIZE_t lo, SIZE_t hi, int* min_v) no
     return min_k
 
 
+cdef inline SIZE_t _rMq_scan_range(BP self, SIZE_t lo, SIZE_t hi, int* max_v) nogil:
+    cdef SIZE_t pos
+    cdef SIZE_t max_k
+    cdef int excess
+
+    max_k = lo
+    excess = _excess_from_block_seed(self, lo)
+    max_v[0] = excess
+
+    for pos in range(lo + 1, hi + 1):
+        excess += -1 + (2 * self._b_ptr[pos])
+        if excess > max_v[0]:
+            max_v[0] = excess
+            max_k = pos
+
+    return max_k
+
+
 cdef class mM:
     def __cinit__(self, BOOL_t[:] B, int B_size):
         self.m_idx = 0
@@ -510,16 +528,35 @@ cdef class BP:
     cpdef SIZE_t rMq(self, SIZE_t i, SIZE_t j) nogil:
         """The leftmost maximmum excess in i -> j"""
         cdef:
-            SIZE_t k, max_k
-            SIZE_t max_v, obs_v
+            SIZE_t k, max_k, obs_k
+            SIZE_t first_block, last_block
+            SIZE_t first_block_end, last_block_start, block_end
+            SIZE_t leaf
+            int max_v, obs_v
 
-        max_k = i
-        max_v = self.excess(i)  # a value larger than what will be tested
-        for k in range(i, j + 1):
-            obs_v = self.excess(k)
+        first_block = i // self._rmm.b
+        last_block = j // self._rmm.b
+
+        if first_block == last_block:
+            return _rMq_scan_range(self, i, j, &max_v)
+
+        first_block_end = min((first_block + 1) * self._rmm.b, self.size) - 1
+        max_k = _rMq_scan_range(self, i, first_block_end, &max_v)
+
+        for k in range(first_block + 1, last_block):
+            leaf = self._rmm.n_internal + k
+            obs_v = <int>self._rmm.mM[leaf, self._rmm.M_idx]
             if obs_v > max_v:
-                max_k = k
+                block_end = min((k + 1) * self._rmm.b, self.size) - 1
+                obs_k = _rMq_scan_range(self, k * self._rmm.b, block_end, &obs_v)
+                max_k = obs_k
                 max_v = obs_v
+
+        last_block_start = last_block * self._rmm.b
+        obs_k = _rMq_scan_range(self, last_block_start, j, &obs_v)
+        if obs_v > max_v:
+            max_k = obs_k
+            max_v = obs_v
 
         return max_k
 
