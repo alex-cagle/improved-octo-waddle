@@ -214,27 +214,176 @@ cdef int _bucket_find_last_containing(BP self, int lo_bucket, int hi_bucket,
     )
 
 
+cdef int _rmm_find_first_cover_node_containing(BP self, int lo_block,
+                                               int hi_block,
+                                               int target) nogil:
+    cdef SIZE_t left_nodes[RMQ_MAX_COVER_NODES]
+    cdef SIZE_t right_nodes[RMQ_MAX_COVER_NODES]
+    cdef SIZE_t left_count = 0
+    cdef SIZE_t right_count = 0
+    cdef SIZE_t base
+    cdef SIZE_t l
+    cdef SIZE_t r
+    cdef SIZE_t node
+    cdef SIZE_t idx
+
+    if lo_block > hi_block:
+        return -1
+
+    base = self._rmm.n_internal + 1
+    l = base + lo_block
+    r = base + hi_block
+
+    while l <= r:
+        if l % 2 == 1:
+            left_nodes[left_count] = l - 1
+            left_count += 1
+            l += 1
+
+        if r % 2 == 0:
+            right_nodes[right_count] = r - 1
+            right_count += 1
+            r -= 1
+
+        l //= 2
+        r //= 2
+
+    for idx in range(left_count):
+        node = left_nodes[idx]
+        if self._rmm.mM[node, self._rmm.m_idx] <= target <= self._rmm.mM[node, self._rmm.M_idx]:
+            return node
+
+    while right_count > 0:
+        right_count -= 1
+        node = right_nodes[right_count]
+        if self._rmm.mM[node, self._rmm.m_idx] <= target <= self._rmm.mM[node, self._rmm.M_idx]:
+            return node
+
+    return -1
+
+
+cdef int _rmm_find_last_cover_node_containing(BP self, int lo_block,
+                                              int hi_block,
+                                              int target) nogil:
+    cdef SIZE_t left_nodes[RMQ_MAX_COVER_NODES]
+    cdef SIZE_t right_nodes[RMQ_MAX_COVER_NODES]
+    cdef SIZE_t left_count = 0
+    cdef SIZE_t right_count = 0
+    cdef SIZE_t base
+    cdef SIZE_t l
+    cdef SIZE_t r
+    cdef SIZE_t node
+    cdef SIZE_t idx
+
+    if lo_block > hi_block:
+        return -1
+
+    base = self._rmm.n_internal + 1
+    l = base + lo_block
+    r = base + hi_block
+
+    while l <= r:
+        if l % 2 == 1:
+            left_nodes[left_count] = l - 1
+            left_count += 1
+            l += 1
+
+        if r % 2 == 0:
+            right_nodes[right_count] = r - 1
+            right_count += 1
+            r -= 1
+
+        l //= 2
+        r //= 2
+
+    for idx in range(right_count):
+        node = right_nodes[idx]
+        if self._rmm.mM[node, self._rmm.m_idx] <= target <= self._rmm.mM[node, self._rmm.M_idx]:
+            return node
+
+    while left_count > 0:
+        left_count -= 1
+        node = left_nodes[left_count]
+        if self._rmm.mM[node, self._rmm.m_idx] <= target <= self._rmm.mM[node, self._rmm.M_idx]:
+            return node
+
+    return -1
+
+
+cdef inline SIZE_t _rmm_descend_leftmost_leaf_containing(BP self, SIZE_t node,
+                                                         int target) nogil:
+    cdef SIZE_t left_child
+    cdef SIZE_t right_child
+
+    while not bt_is_leaf(node, self._rmm.height):
+        left_child = bt_left_child(node)
+        right_child = bt_right_child(node)
+        if self._rmm.mM[left_child, self._rmm.m_idx] <= target <= self._rmm.mM[left_child, self._rmm.M_idx]:
+            node = left_child
+        else:
+            node = right_child
+
+    return node
+
+
+cdef inline SIZE_t _rmm_descend_rightmost_leaf_containing(BP self, SIZE_t node,
+                                                          int target) nogil:
+    cdef SIZE_t left_child
+    cdef SIZE_t right_child
+
+    while not bt_is_leaf(node, self._rmm.height):
+        left_child = bt_left_child(node)
+        right_child = bt_right_child(node)
+        if self._rmm.mM[right_child, self._rmm.m_idx] <= target <= self._rmm.mM[right_child, self._rmm.M_idx]:
+            node = right_child
+        else:
+            node = left_child
+
+    return node
+
+
 cdef int _fwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target) nogil:
     cdef int first_block
     cdef int last_block
+    cdef int first_block_end
+    cdef int last_block_start
     cdef int k
-    cdef int leaf
-    cdef int start_i
     cdef int result
+    cdef SIZE_t node
+    cdef SIZE_t leaf
 
     if lo > hi or hi >= self.size:
         return -1
 
     first_block = lo // self._rmm.b
     last_block = hi // self._rmm.b
-    start_i = <int>lo - 1
 
-    for k in range(first_block, last_block + 1):
-        leaf = self._rmm.n_internal + k
-        if self._rmm.mM[leaf, self._rmm.m_idx] <= target <= self._rmm.mM[leaf, self._rmm.M_idx]:
-            result = _scan_block_forward_rmm(self, start_i, k, target)
-            if result != -1 and result <= hi:
+    if first_block == last_block:
+        result = _scan_block_forward_rmm(self, <int>lo - 1, first_block, target)
+        if result != -1 and result <= hi:
+            return result
+        return -1
+
+    first_block_end = min((first_block + 1) * self._rmm.b, self.size) - 1
+    result = _scan_block_forward_rmm(self, <int>lo - 1, first_block, target)
+    if result != -1 and result <= first_block_end:
+        return result
+
+    if first_block + 1 <= last_block - 1:
+        node = _rmm_find_first_cover_node_containing(
+            self, first_block + 1, last_block - 1, target
+        )
+        if node != <SIZE_t>-1:
+            leaf = _rmm_descend_leftmost_leaf_containing(self, node, target)
+            k = leaf - self._rmm.n_internal
+            result = _scan_block_forward_rmm(self, (k * self._rmm.b) - 1, k, target)
+            if result != -1:
                 return result
+
+    last_block_start = last_block * self._rmm.b
+    result = _scan_block_forward_rmm(self, last_block_start - 1, last_block, target)
+    if result != -1 and result <= hi:
+        return result
 
     return -1
 
@@ -242,10 +391,13 @@ cdef int _fwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target) nogil:
 cdef int _bwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target) nogil:
     cdef int first_block
     cdef int last_block
+    cdef int first_block_end
+    cdef int last_block_start
+    cdef int block_end
     cdef int k
-    cdef int leaf
-    cdef int start_i
     cdef int result
+    cdef SIZE_t node
+    cdef SIZE_t leaf
 
     if lo > hi or hi >= self.size:
         return -1
@@ -257,14 +409,34 @@ cdef int _bwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target) nogil:
 
     first_block = lo // self._rmm.b
     last_block = hi // self._rmm.b
-    start_i = <int>hi + 1
 
-    for k in range(last_block, first_block - 1, -1):
-        leaf = self._rmm.n_internal + k
-        if self._rmm.mM[leaf, self._rmm.m_idx] <= target <= self._rmm.mM[leaf, self._rmm.M_idx]:
-            result = _scan_block_backward_rmm(self, start_i, k, target)
-            if result != -1 and result >= lo:
+    if first_block == last_block:
+        result = _scan_block_backward_rmm(self, <int>hi + 1, first_block, target)
+        if result != -1 and result >= lo:
+            return result
+        return -1
+
+    last_block_start = last_block * self._rmm.b
+    result = _scan_block_backward_rmm(self, <int>hi + 1, last_block, target)
+    if result != -1 and result >= last_block_start:
+        return result
+
+    if first_block + 1 <= last_block - 1:
+        node = _rmm_find_last_cover_node_containing(
+            self, first_block + 1, last_block - 1, target
+        )
+        if node != <SIZE_t>-1:
+            leaf = _rmm_descend_rightmost_leaf_containing(self, node, target)
+            k = leaf - self._rmm.n_internal
+            block_end = min((k + 1) * self._rmm.b, self.size)
+            result = _scan_block_backward_rmm(self, block_end, k, target)
+            if result != -1:
                 return result
+
+    first_block_end = min((first_block + 1) * self._rmm.b, self.size) - 1
+    result = _scan_block_backward_rmm(self, first_block_end + 1, first_block, target)
+    if result != -1 and result >= lo:
+        return result
 
     return -1
 
@@ -1588,53 +1760,49 @@ cdef class BP:
             The index of the result, or -1 if no result was found
         """
         cdef int k  # the block being interrogated
-        cdef int last_block
-        cdef int bucket_k
-        cdef int bucket_b
-        cdef int first_block
-        cdef int leaf
         cdef int result = -1 # the result of a scan within a block
-        cdef int bucket_end
-        cdef int block_end
-        cdef int bucket_start
-        
+        cdef int node  # the node within the binary tree being examined
+
         # get the block of parentheses to check
-        k = i // self._rmm.b  
-        bucket_k = i // self.beta
+        k = i // self._rmm.b
 
         # desired excess
         d += _excess_from_block_seed(self, i)
 
-        bucket_end = min((bucket_k + 1) * self.beta, self.size) - 1
-        last_block = bucket_end // self._rmm.b
+        # determine which node our block corresponds too
+        node = bt_node_from_left(k, self._rmm.height)
 
-        # first search strictly after i within the current bucket using rmM
-        # leaf blocks, preserving the i + 1 lower bound on the first block.
-        for first_block in range(k, last_block + 1):
-            leaf = self._rmm.n_internal + first_block
-            if self._rmm.mM[leaf, self._rmm.m_idx] <= d <= self._rmm.mM[leaf, self._rmm.M_idx]:
-                result = _scan_block_forward_rmm(self, i, first_block, d)
-                if result != -1 and result <= bucket_end:
-                    return result
+        # see if our result is in our current block
+        if self._rmm.mM[node, self._rmm.m_idx] <= d <= self._rmm.mM[node, self._rmm.M_idx]:
+            result = _scan_block_forward_rmm(self, i, k, d)
 
-        # then search later buckets left-to-right using bucket min/max summaries
-        for bucket_b in range(bucket_k + 1, self.n_buckets):
-            if d < self.bucket_m[bucket_b] or d > self.bucket_M[bucket_b]:
-                continue
+        # if we do not have a result, we need to begin traversal of the tree
+        if result == -1:
+            # walk up the tree
+            while not bt_is_root(node):
+                if bt_is_left_child(node):
+                    node = bt_right_sibling(node)
+                    if self._rmm.mM[node, self._rmm.m_idx] <= d <= self._rmm.mM[node, self._rmm.M_idx]:
+                        break
+                node = bt_parent(node)
 
-            bucket_start = bucket_b * self.beta
-            bucket_end = min((bucket_b + 1) * self.beta, self.size) - 1
-            first_block = bucket_start // self._rmm.b
-            last_block = bucket_end // self._rmm.b
+            if bt_is_root(node):
+                return -1
 
-            for k in range(first_block, last_block + 1):
-                leaf = self._rmm.n_internal + k
-                if self._rmm.mM[leaf, self._rmm.m_idx] <= d <= self._rmm.mM[leaf, self._rmm.M_idx]:
-                    result = _scan_block_forward_rmm(self, bucket_start - 1, k, d)
-                    if result != -1:
-                        block_end = min((k + 1) * self._rmm.b, self.size) - 1
-                        if bucket_start <= result <= min(bucket_end, block_end):
-                            return result
+            # descend until we hit a leaf node
+            while not bt_is_leaf(node, self._rmm.height):
+                node = bt_left_child(node)
+
+                # evaluate right, if not found, pick left
+                if not (self._rmm.mM[node, self._rmm.m_idx] <= d <= self._rmm.mM[node, self._rmm.M_idx]):
+                    node = bt_right_sibling(node)
+
+            # we have found a block with contains our solution. convert from the
+            # node index back into the block index
+            k = node - <int>(pow(2, self._rmm.height) - 1)
+
+            # scan for a result using the original d
+            result = _scan_block_forward_rmm(self, i, k, d)
 
         return result
 

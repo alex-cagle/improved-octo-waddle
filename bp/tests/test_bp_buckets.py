@@ -110,6 +110,13 @@ def bucket_tree_reference(bucket_m, bucket_M):
     return base, tree_m, tree_M
 
 
+def rmm_block_size(size):
+    if size <= 2:
+        return 1
+    import math
+    return max(1, int(math.ceil(math.log(size) * math.log(math.log(size)))))
+
+
 def bucket_find_first_ref(bucket_m, bucket_M, lo_bucket, hi_bucket, target):
     if hi_bucket < 0 or lo_bucket >= len(bucket_m):
         return -1
@@ -167,6 +174,14 @@ def bwdsearch_in_range_ref(B, lo, hi, target):
         if excess[pos] == target:
             return pos
     return -1
+
+
+def assert_range_query(B, lo, hi, target):
+    exp_fwd = fwdsearch_in_range_ref(B, lo, hi, target)
+    exp_bwd = bwdsearch_in_range_ref(B, lo, hi, target)
+    obs_fwd, obs_bwd = tbc.get_range_search_results(B, lo, hi, target)
+    assert obs_fwd == exp_fwd
+    assert obs_bwd == exp_bwd
 
 
 def assert_bucket_summaries(B, expected_n_buckets):
@@ -287,6 +302,7 @@ def test_bucket_tree_searches_final_partial_bucket():
 def assert_range_searches(B):
     size = len(B)
     beta = 1 << 15
+    b = rmm_block_size(size)
     excess = excess_values(B)
     queries = [
         (0, 0),
@@ -297,6 +313,13 @@ def assert_range_searches(B):
 
     if size > 20:
         queries.append((10, min(size - 1, 20)))
+
+    if size > b + 4:
+        queries.append((b - 2, min(size - 1, b + 2)))
+
+    if size > (3 * b) + 4:
+        queries.append((b - 2, min(size - 1, (3 * b) + 2)))
+        queries.append((b + 1, min(size - 1, (4 * b) + 1)))
 
     if size > beta + 10:
         queries.append((beta - 5, beta + 5))
@@ -323,12 +346,36 @@ def assert_range_searches(B):
             max(excess) + 1,
         }
 
+        if hi > lo:
+            targets.add(excess[min(hi, lo + 1)])
+            targets.add(excess[max(lo, hi - 1)])
+
         for target in sorted(targets):
-            exp_fwd = fwdsearch_in_range_ref(B, lo, hi, target)
-            exp_bwd = bwdsearch_in_range_ref(B, lo, hi, target)
-            obs_fwd, obs_bwd = tbc.get_range_search_results(B, lo, hi, target)
-            assert obs_fwd == exp_fwd
-            assert obs_bwd == exp_bwd
+            assert_range_query(B, lo, hi, target)
+
+
+def test_range_searches_crafted_block_cases():
+    n = ((5 * (1 << 15)) + 50) // 2
+    B = PATTERNS["nested"](n)
+    b = rmm_block_size(len(B))
+    excess = excess_values(B)
+
+    cases = [
+        (0, min(len(B) - 1, b - 1), excess[0]),                 # target at first position
+        (0, min(len(B) - 1, b - 1), excess[min(len(B) - 1, b - 1)]),  # target at last position
+        (b - 2, min(len(B) - 1, (3 * b) + 1), excess[b + 1]),   # first middle full block
+        (b - 2, min(len(B) - 1, (4 * b) + 1), excess[(3 * b)]), # later middle full block
+        (b - 2, min(len(B) - 1, (3 * b) + 1), max(excess) + 1), # no result
+    ]
+
+    if len(B) > (1 << 15) + 10:
+        cases.append(((1 << 15) - 5, (1 << 15) + 5, excess[(1 << 15)]))
+
+    if len(B) > (2 * (1 << 15)) + 10:
+        cases.append((len(B) - 12, len(B) - 1, excess[len(B) - 1]))
+
+    for lo, hi, target in cases:
+        assert_range_query(B, lo, hi, target)
 
 
 def test_range_searches_one_bucket():
