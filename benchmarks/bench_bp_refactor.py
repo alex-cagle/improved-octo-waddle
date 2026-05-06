@@ -45,12 +45,14 @@ from bp import BP
 
 
 SEED = 20250217
-NS = (256, 1024, 4096, 16384)
+NS = (256, 1024, 4096, 16384, 32768, 65536)
 MODES = ("nested", "flat", "mixed", "random")
+BETA = 1 << 15
 
 DEPTH_QUERIES = 512
 CLOSE_QUERIES = 512
 PARENT_QUERIES = 512
+BUCKET_QUERIES = 256
 RANGE_QUERIES = 128
 MIN_QUERIES = 32
 
@@ -122,12 +124,93 @@ def make_open_positions(B, limit, seed):
     return sorted(rng.sample(opens, limit))
 
 
+def matching_maps(B):
+    stack = []
+    open_to_close = {}
+    close_to_open = {}
+
+    for idx, bit in enumerate(B):
+        if bit:
+            stack.append(idx)
+        else:
+            open_idx = stack.pop()
+            open_to_close[open_idx] = idx
+            close_to_open[idx] = open_idx
+
+    return open_to_close, close_to_open
+
+
+def parent_maps(B):
+    stack = []
+    open_to_parent = {}
+    close_to_parent = {}
+
+    for idx, bit in enumerate(B):
+        if bit:
+            open_to_parent[idx] = stack[-1] if stack else -1
+            stack.append(idx)
+        else:
+            open_idx = stack.pop()
+            close_to_parent[idx] = open_to_parent[open_idx]
+
+    return open_to_parent, close_to_parent
+
+
+def sample_positions(positions, limit, seed):
+    if len(positions) <= limit:
+        return sorted(positions)
+    rng = random.Random(seed)
+    return sorted(rng.sample(positions, limit))
+
+
+def make_close_bucket_positions(B, beta, limit, seed):
+    open_to_close, _ = matching_maps(B)
+    same_bucket = []
+    cross_bucket = []
+
+    for open_idx, close_idx in open_to_close.items():
+        if (open_idx // beta) == (close_idx // beta):
+            same_bucket.append(open_idx)
+        else:
+            cross_bucket.append(open_idx)
+
+    return {
+        "same_bucket": sample_positions(same_bucket, limit, seed),
+        "cross_bucket": sample_positions(cross_bucket, limit, seed + 1),
+    }
+
+
 def make_parent_positions(size, limit, seed):
     positions = list(range(1, size - 1))
     if len(positions) <= limit:
         return positions
     rng = random.Random(seed)
     return sorted(rng.sample(positions, limit))
+
+
+def make_parent_bucket_positions(B, beta, limit, seed):
+    open_to_parent, close_to_parent = parent_maps(B)
+    same_bucket = []
+    cross_bucket = []
+
+    for pos in range(1, len(B) - 1):
+        if B[pos]:
+            parent = open_to_parent[pos]
+        else:
+            parent = close_to_parent[pos]
+
+        if parent == -1:
+            continue
+
+        if (pos // beta) == (parent // beta):
+            same_bucket.append(pos)
+        else:
+            cross_bucket.append(pos)
+
+    return {
+        "same_bucket": sample_positions(same_bucket, limit, seed),
+        "cross_bucket": sample_positions(cross_bucket, limit, seed + 1),
+    }
 
 
 def make_intervals(size, limit, seed):
@@ -179,10 +262,21 @@ def make_minselect_queries(bp, intervals):
 
 def make_queries(bp, B, seed_base):
     size = len(B)
+    close_bucket_positions = make_close_bucket_positions(
+        B, BETA, BUCKET_QUERIES, seed_base + 20
+    )
+    parent_bucket_positions = make_parent_bucket_positions(
+        B, BETA, BUCKET_QUERIES, seed_base + 30
+    )
+
     return {
         "depth": make_positions(size, DEPTH_QUERIES, seed_base + 1),
         "close": make_open_positions(B, CLOSE_QUERIES, seed_base + 2),
+        "close_same_bucket": close_bucket_positions["same_bucket"],
+        "close_cross_bucket": close_bucket_positions["cross_bucket"],
         "parent": make_parent_positions(size, PARENT_QUERIES, seed_base + 3),
+        "parent_same_bucket": parent_bucket_positions["same_bucket"],
+        "parent_cross_bucket": parent_bucket_positions["cross_bucket"],
         "rmq": make_intervals(size, RANGE_QUERIES, seed_base + 4),
         "rMq": make_intervals(size, RANGE_QUERIES, seed_base + 5),
         "mincount": make_intervals(size, MIN_QUERIES, seed_base + 6),
@@ -299,7 +393,11 @@ def run_case(n, mode):
     for name, fn, q in (
         ("depth", time_depth, queries["depth"]),
         ("close", time_close, queries["close"]),
+        ("close_same_bucket", time_close, queries["close_same_bucket"]),
+        ("close_cross_bucket", time_close, queries["close_cross_bucket"]),
         ("parent", time_parent, queries["parent"]),
+        ("parent_same_bucket", time_parent, queries["parent_same_bucket"]),
+        ("parent_cross_bucket", time_parent, queries["parent_cross_bucket"]),
         ("rmq", time_rmq, queries["rmq"]),
         ("rMq", time_rMq, queries["rMq"]),
         ("mincount", time_mincount, queries["mincount"]),
@@ -307,6 +405,7 @@ def run_case(n, mode):
     ):
         elapsed, partial_checksum, count = fn(bp, q)
         timings[name] = ns_per_op(elapsed, count)
+        timings[f"{name}_checksum"] = partial_checksum
         checksum += partial_checksum
 
     return {
@@ -320,11 +419,19 @@ def run_case(n, mode):
         "tracemalloc_peak_kb": f"{construct['tracemalloc_peak_kb']:.1f}",
         "depth_ns_per_op": f"{timings['depth']:.1f}",
         "close_ns_per_op": f"{timings['close']:.1f}",
+        "close_same_bucket_ns_per_op": f"{timings['close_same_bucket']:.1f}",
+        "close_cross_bucket_ns_per_op": f"{timings['close_cross_bucket']:.1f}",
         "parent_ns_per_op": f"{timings['parent']:.1f}",
+        "parent_same_bucket_ns_per_op": f"{timings['parent_same_bucket']:.1f}",
+        "parent_cross_bucket_ns_per_op": f"{timings['parent_cross_bucket']:.1f}",
         "rmq_ns_per_op": f"{timings['rmq']:.1f}",
         "rMq_ns_per_op": f"{timings['rMq']:.1f}",
         "mincount_ns_per_op": f"{timings['mincount']:.1f}",
         "minselect_ns_per_op": f"{timings['minselect']:.1f}",
+        "close_same_bucket_checksum": timings["close_same_bucket_checksum"],
+        "close_cross_bucket_checksum": timings["close_cross_bucket_checksum"],
+        "parent_same_bucket_checksum": timings["parent_same_bucket_checksum"],
+        "parent_cross_bucket_checksum": timings["parent_cross_bucket_checksum"],
         "checksum": checksum,
     }
 
@@ -341,11 +448,19 @@ def main():
         "tracemalloc_peak_kb",
         "depth_ns_per_op",
         "close_ns_per_op",
+        "close_same_bucket_ns_per_op",
+        "close_cross_bucket_ns_per_op",
         "parent_ns_per_op",
+        "parent_same_bucket_ns_per_op",
+        "parent_cross_bucket_ns_per_op",
         "rmq_ns_per_op",
         "rMq_ns_per_op",
         "mincount_ns_per_op",
         "minselect_ns_per_op",
+        "close_same_bucket_checksum",
+        "close_cross_bucket_checksum",
+        "parent_same_bucket_checksum",
+        "parent_cross_bucket_checksum",
         "checksum",
     ]
 
