@@ -27,6 +27,7 @@ Checksums are included so results can be sanity-checked across runs.
 
 import csv
 import gc
+import math
 import os
 import platform
 import random
@@ -261,8 +262,6 @@ def make_parent_bucket_positions(B, beta, limit, seed):
 
 
 def make_intervals(size, limit, seed):
-    rng = random.Random(seed)
-    intervals = []
     widths = (
         1,
         2,
@@ -277,6 +276,12 @@ def make_intervals(size, limit, seed):
         max(1, size // 16),
         max(1, size // 8),
     )
+    return make_intervals_with_widths(size, limit, seed, widths)
+
+
+def make_intervals_with_widths(size, limit, seed, widths):
+    rng = random.Random(seed)
+    intervals = []
 
     for idx in range(limit):
         width = widths[idx % len(widths)]
@@ -291,6 +296,26 @@ def make_intervals(size, limit, seed):
         intervals.append((i, j))
 
     return intervals
+
+
+def rmm_block_size(size):
+    return max(1, int(math.ceil(math.log(float(size)) * math.log(math.log(float(size))))))
+
+
+def middle_blocks(interval, block_size):
+    i, j = interval
+    return (j // block_size) - (i // block_size) - 1
+
+
+def make_long_minselect_intervals(size, limit, seed):
+    widths = (
+        max(1, size // 128),
+        max(1, size // 64),
+        max(1, size // 32),
+        max(1, size // 16),
+        max(1, size // 8),
+    )
+    return make_intervals_with_widths(size, limit, seed, widths)
 
 
 def make_minselect_queries(bp, intervals):
@@ -329,6 +354,8 @@ def make_queries(bp, B, seed_base):
         "rMq": make_intervals(size, limits["range"], seed_base + 5),
         "mincount": make_intervals(size, limits["min"], seed_base + 6),
         "minselect": None,
+        "minselect_short": None,
+        "minselect_long": None,
     }
 
 
@@ -433,7 +460,21 @@ def run_case(n, mode):
     bp = construct["bp"]
     seed_base = SEED + (97 * n) + len(mode)
     queries = make_queries(bp, B, seed_base)
+    block_size = rmm_block_size(len(B))
     queries["minselect"] = make_minselect_queries(bp, queries["mincount"])
+    short_intervals = [
+        interval for interval in queries["mincount"]
+        if middle_blocks(interval, block_size) < 4
+    ]
+    long_base = make_long_minselect_intervals(
+        len(B), max(1, len(queries["mincount"])), seed_base + 60
+    )
+    long_intervals = [
+        interval for interval in long_base
+        if middle_blocks(interval, block_size) >= 4
+    ]
+    queries["minselect_short"] = make_minselect_queries(bp, short_intervals)
+    queries["minselect_long"] = make_minselect_queries(bp, long_intervals)
 
     timings = {}
     checksum = 0
@@ -450,6 +491,8 @@ def run_case(n, mode):
         ("rMq", time_rMq, queries["rMq"]),
         ("mincount", time_mincount, queries["mincount"]),
         ("minselect", time_minselect, queries["minselect"]),
+        ("minselect_short", time_minselect, queries["minselect_short"]),
+        ("minselect_long", time_minselect, queries["minselect_long"]),
     ):
         elapsed, partial_checksum, count = fn(bp, q)
         timings[name] = ns_per_op(elapsed, count)
@@ -476,10 +519,14 @@ def run_case(n, mode):
         "rMq_ns_per_op": f"{timings['rMq']:.1f}",
         "mincount_ns_per_op": f"{timings['mincount']:.1f}",
         "minselect_ns_per_op": f"{timings['minselect']:.1f}",
+        "minselect_short_ns_per_op": f"{timings['minselect_short']:.1f}",
+        "minselect_long_ns_per_op": f"{timings['minselect_long']:.1f}",
         "close_same_bucket_checksum": timings["close_same_bucket_checksum"],
         "close_cross_bucket_checksum": timings["close_cross_bucket_checksum"],
         "parent_same_bucket_checksum": timings["parent_same_bucket_checksum"],
         "parent_cross_bucket_checksum": timings["parent_cross_bucket_checksum"],
+        "minselect_short_checksum": timings["minselect_short_checksum"],
+        "minselect_long_checksum": timings["minselect_long_checksum"],
         "checksum": checksum,
     }
 
@@ -505,10 +552,14 @@ def main():
         "rMq_ns_per_op",
         "mincount_ns_per_op",
         "minselect_ns_per_op",
+        "minselect_short_ns_per_op",
+        "minselect_long_ns_per_op",
         "close_same_bucket_checksum",
         "close_cross_bucket_checksum",
         "parent_same_bucket_checksum",
         "parent_cross_bucket_checksum",
+        "minselect_short_checksum",
+        "minselect_long_checksum",
         "checksum",
     ]
 
