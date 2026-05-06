@@ -110,6 +110,38 @@ def bucket_tree_reference(bucket_m, bucket_M):
     return base, tree_m, tree_M
 
 
+def bucket_find_first_ref(bucket_m, bucket_M, lo_bucket, hi_bucket, target):
+    if hi_bucket < 0 or lo_bucket >= len(bucket_m):
+        return -1
+
+    lo_bucket = max(0, lo_bucket)
+    hi_bucket = min(len(bucket_m) - 1, hi_bucket)
+    if lo_bucket > hi_bucket:
+        return -1
+
+    for bucket_idx in range(lo_bucket, hi_bucket + 1):
+        if bucket_m[bucket_idx] <= target <= bucket_M[bucket_idx]:
+            return bucket_idx
+
+    return -1
+
+
+def bucket_find_last_ref(bucket_m, bucket_M, lo_bucket, hi_bucket, target):
+    if hi_bucket < 0 or lo_bucket >= len(bucket_m):
+        return -1
+
+    lo_bucket = max(0, lo_bucket)
+    hi_bucket = min(len(bucket_m) - 1, hi_bucket)
+    if lo_bucket > hi_bucket:
+        return -1
+
+    for bucket_idx in range(hi_bucket, lo_bucket - 1, -1):
+        if bucket_m[bucket_idx] <= target <= bucket_M[bucket_idx]:
+            return bucket_idx
+
+    return -1
+
+
 def assert_bucket_summaries(B, expected_n_buckets):
     (beta,
      n_buckets,
@@ -164,3 +196,62 @@ def test_bucket_summaries_final_partial_bucket():
     n = ((1 << 15) + 2) // 2
     for builder in PATTERNS.values():
         assert_bucket_summaries(builder(n), 2)
+
+
+def assert_bucket_tree_searches(B):
+    (beta,
+     n_buckets,
+     bucket_tree_base,
+     bucket_e,
+     bucket_m,
+     bucket_M,
+     bucket_tree_m,
+     bucket_tree_M) = tbc.get_bucket_summaries(B)
+
+    del beta, bucket_tree_m, bucket_tree_M, bucket_e
+
+    hi_with_padding = bucket_tree_base - 1
+    ranges = []
+    for lo_bucket in range(-1, n_buckets + 1):
+        for hi_bucket in range(lo_bucket, hi_with_padding + 1):
+            ranges.append((lo_bucket, hi_bucket))
+
+    max_target = int(bucket_M.max()) if len(bucket_M) else 0
+    targets = [-1, 0, max_target + 1]
+    for bucket_idx in range(n_buckets):
+        targets.extend(
+            [
+                int(bucket_m[bucket_idx]),
+                int(bucket_M[bucket_idx]),
+                int((bucket_m[bucket_idx] + bucket_M[bucket_idx]) // 2),
+            ]
+        )
+
+    for lo_bucket, hi_bucket in ranges:
+        for target in sorted(set(targets)):
+            exp_first = bucket_find_first_ref(bucket_m, bucket_M, lo_bucket,
+                                              hi_bucket, target)
+            exp_last = bucket_find_last_ref(bucket_m, bucket_M, lo_bucket,
+                                            hi_bucket, target)
+            obs_first, obs_last = tbc.get_bucket_tree_search_results(
+                B, lo_bucket, hi_bucket, target
+            )
+            assert obs_first == exp_first
+            assert obs_last == exp_last
+
+
+def test_bucket_tree_searches_one_bucket():
+    for builder in PATTERNS.values():
+        assert_bucket_tree_searches(builder(32))
+
+
+def test_bucket_tree_searches_multiple_buckets():
+    n = ((3 * (1 << 15)) + 50) // 2
+    for builder in PATTERNS.values():
+        assert_bucket_tree_searches(builder(n))
+
+
+def test_bucket_tree_searches_final_partial_bucket():
+    n = ((2 * (1 << 15)) + 14) // 2
+    for builder in PATTERNS.values():
+        assert_bucket_tree_searches(builder(n))

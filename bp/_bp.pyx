@@ -126,6 +126,94 @@ cdef inline int _scan_block_backward_rmm(BP self, int i, int k, int d) nogil:
     return -1
 
 
+cdef int _bucket_find_first_containing_node(BP self, int node, int node_lo,
+                                            int node_hi, int lo_bucket,
+                                            int hi_bucket, int target) nogil:
+    cdef int mid
+    cdef int result
+
+    if node_hi < lo_bucket or node_lo > hi_bucket:
+        return -1
+
+    if self.bucket_tree_m[node] > target or self.bucket_tree_M[node] < target:
+        return -1
+
+    if node_lo == node_hi:
+        if node_lo >= self.n_buckets:
+            return -1
+        return node_lo
+
+    mid = node_lo + ((node_hi - node_lo) // 2)
+    result = _bucket_find_first_containing_node(
+        self, 2 * node, node_lo, mid, lo_bucket, hi_bucket, target
+    )
+    if result != -1:
+        return result
+
+    return _bucket_find_first_containing_node(
+        self, (2 * node) + 1, mid + 1, node_hi, lo_bucket, hi_bucket, target
+    )
+
+
+cdef int _bucket_find_last_containing_node(BP self, int node, int node_lo,
+                                           int node_hi, int lo_bucket,
+                                           int hi_bucket, int target) nogil:
+    cdef int mid
+    cdef int result
+
+    if node_hi < lo_bucket or node_lo > hi_bucket:
+        return -1
+
+    if self.bucket_tree_m[node] > target or self.bucket_tree_M[node] < target:
+        return -1
+
+    if node_lo == node_hi:
+        if node_lo >= self.n_buckets:
+            return -1
+        return node_lo
+
+    mid = node_lo + ((node_hi - node_lo) // 2)
+    result = _bucket_find_last_containing_node(
+        self, (2 * node) + 1, mid + 1, node_hi, lo_bucket, hi_bucket, target
+    )
+    if result != -1:
+        return result
+
+    return _bucket_find_last_containing_node(
+        self, 2 * node, node_lo, mid, lo_bucket, hi_bucket, target
+    )
+
+
+cdef int _bucket_find_first_containing(BP self, int lo_bucket, int hi_bucket,
+                                       int target) nogil:
+    if hi_bucket < 0 or lo_bucket >= self.n_buckets:
+        return -1
+
+    lo_bucket = max(0, lo_bucket)
+    hi_bucket = min(self.n_buckets - 1, hi_bucket)
+    if lo_bucket > hi_bucket:
+        return -1
+
+    return _bucket_find_first_containing_node(
+        self, 1, 0, self.bucket_tree_base - 1, lo_bucket, hi_bucket, target
+    )
+
+
+cdef int _bucket_find_last_containing(BP self, int lo_bucket, int hi_bucket,
+                                      int target) nogil:
+    if hi_bucket < 0 or lo_bucket >= self.n_buckets:
+        return -1
+
+    lo_bucket = max(0, lo_bucket)
+    hi_bucket = min(self.n_buckets - 1, hi_bucket)
+    if lo_bucket > hi_bucket:
+        return -1
+
+    return _bucket_find_last_containing_node(
+        self, 1, 0, self.bucket_tree_base - 1, lo_bucket, hi_bucket, target
+    )
+
+
 cdef inline SIZE_t _rmq_scan_range(BP self, SIZE_t lo, SIZE_t hi, int* min_v) nogil:
     cdef SIZE_t pos
     cdef SIZE_t min_k
@@ -160,6 +248,16 @@ cdef inline SIZE_t _rMq_scan_range(BP self, SIZE_t lo, SIZE_t hi, int* max_v) no
             max_k = pos
 
     return max_k
+
+
+def _test_bucket_find_first_containing(BP self, int lo_bucket, int hi_bucket,
+                                       int target):
+    return _bucket_find_first_containing(self, lo_bucket, hi_bucket, target)
+
+
+def _test_bucket_find_last_containing(BP self, int lo_bucket, int hi_bucket,
+                                      int target):
+    return _bucket_find_last_containing(self, lo_bucket, hi_bucket, target)
 
 
 cdef void _rmq_find_best_middle_cover_node(BP self, SIZE_t query_left,

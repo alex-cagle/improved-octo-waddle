@@ -1,6 +1,7 @@
 import numpy.testing as npt
 import numpy as np
 cimport numpy as np
+import bp._bp as bp_impl
 
 from bp._bp cimport BP, mM
 
@@ -22,6 +23,15 @@ def get_bucket_summaries(np.ndarray[np.uint8_t, ndim=1] B):
             np.asarray(obj.bucket_M),
             np.asarray(obj.bucket_tree_m),
             np.asarray(obj.bucket_tree_M))
+
+
+def get_bucket_tree_search_results(np.ndarray[np.uint8_t, ndim=1] B,
+                                   int lo_bucket, int hi_bucket, int target):
+    cdef BP obj = BP(B)
+    return (
+        bp_impl._test_bucket_find_first_containing(obj, lo_bucket, hi_bucket, target),
+        bp_impl._test_bucket_find_last_containing(obj, lo_bucket, hi_bucket, target),
+    )
 
 
 def test_rank():
