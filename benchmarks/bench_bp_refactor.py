@@ -45,7 +45,7 @@ from bp import BP
 
 
 SEED = 20250217
-NS = (256, 1024, 4096, 16384, 32768, 65536)
+NS = (256, 1024, 4096, 16384, 32768, 65536, 131072, 262144)
 MODES = ("nested", "flat", "mixed", "random")
 BETA = 1 << 15
 
@@ -55,6 +55,35 @@ PARENT_QUERIES = 512
 BUCKET_QUERIES = 256
 RANGE_QUERIES = 128
 MIN_QUERIES = 32
+
+
+def query_limits(n):
+    if n >= 262144:
+        return {
+            "depth": 128,
+            "close": 128,
+            "parent": 128,
+            "bucket": 128,
+            "range": 64,
+            "min": 16,
+        }
+    if n >= 131072:
+        return {
+            "depth": 256,
+            "close": 256,
+            "parent": 256,
+            "bucket": 128,
+            "range": 96,
+            "min": 24,
+        }
+    return {
+        "depth": DEPTH_QUERIES,
+        "close": CLOSE_QUERIES,
+        "parent": PARENT_QUERIES,
+        "bucket": BUCKET_QUERIES,
+        "range": RANGE_QUERIES,
+        "min": MIN_QUERIES,
+    }
 
 
 def nested_bits(n):
@@ -262,24 +291,25 @@ def make_minselect_queries(bp, intervals):
 
 def make_queries(bp, B, seed_base):
     size = len(B)
+    limits = query_limits(len(B) // 2)
     close_bucket_positions = make_close_bucket_positions(
-        B, BETA, BUCKET_QUERIES, seed_base + 20
+        B, BETA, limits["bucket"], seed_base + 20
     )
     parent_bucket_positions = make_parent_bucket_positions(
-        B, BETA, BUCKET_QUERIES, seed_base + 30
+        B, BETA, limits["bucket"], seed_base + 30
     )
 
     return {
-        "depth": make_positions(size, DEPTH_QUERIES, seed_base + 1),
-        "close": make_open_positions(B, CLOSE_QUERIES, seed_base + 2),
+        "depth": make_positions(size, limits["depth"], seed_base + 1),
+        "close": make_open_positions(B, limits["close"], seed_base + 2),
         "close_same_bucket": close_bucket_positions["same_bucket"],
         "close_cross_bucket": close_bucket_positions["cross_bucket"],
-        "parent": make_parent_positions(size, PARENT_QUERIES, seed_base + 3),
+        "parent": make_parent_positions(size, limits["parent"], seed_base + 3),
         "parent_same_bucket": parent_bucket_positions["same_bucket"],
         "parent_cross_bucket": parent_bucket_positions["cross_bucket"],
-        "rmq": make_intervals(size, RANGE_QUERIES, seed_base + 4),
-        "rMq": make_intervals(size, RANGE_QUERIES, seed_base + 5),
-        "mincount": make_intervals(size, MIN_QUERIES, seed_base + 6),
+        "rmq": make_intervals(size, limits["range"], seed_base + 4),
+        "rMq": make_intervals(size, limits["range"], seed_base + 5),
+        "mincount": make_intervals(size, limits["min"], seed_base + 6),
         "minselect": None,
     }
 
