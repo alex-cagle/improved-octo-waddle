@@ -45,7 +45,7 @@ from bp import BP
 
 
 SEED = 20250217
-NS = (256, 1024, 4096, 16384, 32768, 65536, 131072, 262144)
+NS = (256, 1024, 4096, 16384, 32768, 65536, 131072, 262144, 524288, 1048576)
 MODES = ("nested", "flat", "mixed", "random")
 BETA = 1 << 15
 
@@ -58,6 +58,24 @@ MIN_QUERIES = 32
 
 
 def query_limits(n):
+    if n >= 1048576:
+        return {
+            "depth": 64,
+            "close": 64,
+            "parent": 64,
+            "bucket": 64,
+            "range": 32,
+            "min": 8,
+        }
+    if n >= 524288:
+        return {
+            "depth": 64,
+            "close": 64,
+            "parent": 64,
+            "bucket": 64,
+            "range": 32,
+            "min": 8,
+        }
     if n >= 262144:
         return {
             "depth": 128,
@@ -498,7 +516,10 @@ def main():
     writer.writeheader()
 
     for n in NS:
-        for mode in MODES:
+        modes = MODES
+        if n >= 1048576:
+            modes = tuple(mode for mode in MODES if mode != "flat")
+        for mode in modes:
             writer.writerow(run_case(n, mode))
 
 
