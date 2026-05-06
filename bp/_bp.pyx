@@ -441,6 +441,75 @@ cdef int _bwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target) nogil:
     return -1
 
 
+cdef inline SIZE_t _count_min_in_range(BP self, SIZE_t lo, SIZE_t hi,
+                                       int min_v) nogil:
+    cdef SIZE_t pos
+    cdef SIZE_t count = 0
+    cdef int excess
+
+    if lo > hi or hi >= self.size:
+        return 0
+
+    excess = _excess_from_block_seed(self, lo)
+    if excess == min_v:
+        count += 1
+
+    for pos in range(lo + 1, hi + 1):
+        excess += -1 + (2 * self._b_ptr[pos])
+        if excess == min_v:
+            count += 1
+
+    return count
+
+
+cdef SIZE_t _rmm_count_min_cover(BP self, int lo_block, int hi_block,
+                                 int min_v) nogil:
+    cdef SIZE_t left_nodes[RMQ_MAX_COVER_NODES]
+    cdef SIZE_t right_nodes[RMQ_MAX_COVER_NODES]
+    cdef SIZE_t left_count = 0
+    cdef SIZE_t right_count = 0
+    cdef SIZE_t base
+    cdef SIZE_t l
+    cdef SIZE_t r
+    cdef SIZE_t node
+    cdef SIZE_t idx
+    cdef SIZE_t count = 0
+
+    if lo_block > hi_block:
+        return 0
+
+    base = self._rmm.n_internal + 1
+    l = base + lo_block
+    r = base + hi_block
+
+    while l <= r:
+        if l % 2 == 1:
+            left_nodes[left_count] = l - 1
+            left_count += 1
+            l += 1
+
+        if r % 2 == 0:
+            right_nodes[right_count] = r - 1
+            right_count += 1
+            r -= 1
+
+        l //= 2
+        r //= 2
+
+    for idx in range(left_count):
+        node = left_nodes[idx]
+        if self._rmm.mM[node, self._rmm.m_idx] == min_v:
+            count += self._rmm.n[node]
+
+    while right_count > 0:
+        right_count -= 1
+        node = right_nodes[right_count]
+        if self._rmm.mM[node, self._rmm.m_idx] == min_v:
+            count += self._rmm.n[node]
+
+    return count
+
+
 cdef inline SIZE_t _rmq_scan_range(BP self, SIZE_t lo, SIZE_t hi, int* min_v) nogil:
     cdef SIZE_t pos
     cdef SIZE_t min_k
@@ -1234,24 +1303,32 @@ cdef class BP:
 
     def mincount(self, SIZE_t i, SIZE_t j):
         """number of occurrences of the minimum in excess(i), excess(i + 1), . . . , excess(j)."""
-        cdef SIZE_t pos
         cdef SIZE_t min_pos
         cdef SIZE_t count
+        cdef SIZE_t first_block_end
+        cdef SIZE_t last_block_start
+        cdef int first_block
+        cdef int last_block
         cdef int min_v
-        cdef int excess
 
         min_pos = self.rmq(i, j)
         min_v = _excess_from_block_seed(self, min_pos)
-        excess = _excess_from_block_seed(self, i)
-        count = 0
+        first_block = i // self._rmm.b
+        last_block = j // self._rmm.b
 
-        if excess == min_v:
-            count += 1
+        if first_block == last_block:
+            return _count_min_in_range(self, i, j, min_v)
 
-        for pos in range(i + 1, j + 1):
-            excess += -1 + (2 * self._b_ptr[pos])
-            if excess == min_v:
-                count += 1
+        first_block_end = min((first_block + 1) * self._rmm.b, self.size) - 1
+        last_block_start = last_block * self._rmm.b
+        count = _count_min_in_range(self, i, first_block_end, min_v)
+
+        if first_block + 1 <= last_block - 1:
+            count += _rmm_count_min_cover(
+                self, first_block + 1, last_block - 1, min_v
+            )
+
+        count += _count_min_in_range(self, last_block_start, j, min_v)
 
         return count
 

@@ -238,6 +238,45 @@ def test_exactly_one_middle_full_block_case():
     assert bp.rMq(i, j) == rMq_ref(B, i, j)
 
 
+def test_mincount_interval_shapes():
+    B = nested_bits(64)
+    size = len(B)
+    b = rmm_block_size(size)
+    bp = BP(B)
+
+    intervals = [
+        (0, min(size - 1, b - 1)),                             # same block
+        (b - 1, min(size - 1, b + 1)),                         # no middle full blocks
+        (1, min(size - 1, 2 * b)),                             # one middle full block
+        (b - 2, min(size - 1, (4 * b) + 1)),                   # many middle full blocks
+        (max(0, size - b - 1), size - 1),                      # final partial block
+    ]
+
+    for i, j in intervals:
+        assert bp.mincount(i, j) == mincount_ref(B, i, j)
+
+
+def test_mincount_region_split_cases():
+    for B in (
+        nested_bits(64),
+        flat_bits(64),
+        mixed_bits(64),
+    ):
+        size = len(B)
+        b = rmm_block_size(size)
+        bp = BP(B)
+
+        intervals = [
+            (0, min(size - 1, (2 * b) + 1)),                   # minimum can stay left
+            (b - 1, min(size - 1, (3 * b) + 1)),               # minimum can fall in middle
+            (max(0, size - (2 * b) - 1), size - 1),            # minimum can fall right
+            (b - 1, size - 1),                                 # split across regions
+        ]
+
+        for i, j in intervals:
+            assert bp.mincount(i, j) == mincount_ref(B, i, j)
+
+
 def test_winning_region_cases_for_rmq():
     for B in (
         nested_bits(CASE_NS["final_partial"]),
