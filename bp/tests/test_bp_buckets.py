@@ -1,6 +1,8 @@
 import random
 
 import numpy as np
+import bp._bp as bp_impl
+from bp import BP
 
 import bp.tests.test_bp_cy as tbc
 
@@ -117,6 +119,61 @@ def rmm_block_size(size):
     return max(1, int(math.ceil(math.log(size) * math.log(math.log(size)))))
 
 
+def rmm_metadata_reference(B):
+    size = len(B)
+    b = rmm_block_size(size)
+    n_tip = (size + b - 1) // b
+    height = 0
+    while (1 << height) < n_tip:
+        height += 1
+    n_internal = (1 << height) - 1
+    n_total = n_internal + n_tip
+
+    mins = np.zeros(n_total, dtype=np.intp)
+    counts = np.zeros(n_total, dtype=np.intp)
+
+    excess = 0
+    for offset in range(n_tip):
+        start = offset * b
+        end = min(start + b, size)
+        min_value = None
+        count_min = 0
+
+        for pos in range(start, end):
+            excess += -1 + (2 * int(B[pos]))
+            if min_value is None or excess < min_value:
+                min_value = excess
+                count_min = 1
+            elif excess == min_value:
+                count_min += 1
+
+        mins[n_internal + offset] = min_value
+        counts[n_internal + offset] = count_min
+
+    for node in range(n_internal - 1, -1, -1):
+        left = (2 * node) + 1
+        right = left + 1
+
+        if left >= n_total:
+            continue
+        if right >= n_total:
+            mins[node] = mins[left]
+            counts[node] = counts[left]
+            continue
+
+        left_min = mins[left]
+        right_min = mins[right]
+        mins[node] = min(left_min, right_min)
+        if left_min < right_min:
+            counts[node] = counts[left]
+        elif right_min < left_min:
+            counts[node] = counts[right]
+        else:
+            counts[node] = counts[left] + counts[right]
+
+    return b, n_tip, n_internal, n_total, height, mins, counts
+
+
 def bucket_find_first_ref(bucket_m, bucket_M, lo_bucket, hi_bucket, target):
     if hi_bucket < 0 or lo_bucket >= len(bucket_m):
         return -1
@@ -184,6 +241,51 @@ def assert_range_query(B, lo, hi, target):
     assert obs_bwd == exp_bwd
 
 
+def assert_rmm_mincount_metadata(B):
+    (obs_b,
+     obs_n_tip,
+     obs_n_internal,
+     obs_n_total,
+     obs_height,
+     obs_mins,
+     obs_counts) = bp_impl._test_get_rmm_mincount_metadata(BP(B))
+    (exp_b,
+     exp_n_tip,
+     exp_n_internal,
+     exp_n_total,
+     exp_height,
+     exp_mins,
+     exp_counts) = rmm_metadata_reference(B)
+
+    assert obs_b == exp_b
+    assert obs_n_tip == exp_n_tip
+    assert obs_n_internal == exp_n_internal
+    assert obs_n_total == exp_n_total
+    assert obs_height == exp_height
+    np.testing.assert_array_equal(obs_mins, exp_mins)
+    np.testing.assert_array_equal(obs_counts, exp_counts)
+
+    for offset in range(obs_n_tip):
+        leaf = obs_n_internal + offset
+        assert obs_counts[leaf] >= 1
+
+    for node in range(obs_n_internal - 1, -1, -1):
+        left = (2 * node) + 1
+        right = left + 1
+        if left >= obs_n_total:
+            assert obs_counts[node] == 0
+            continue
+        if right >= obs_n_total:
+            assert obs_counts[node] == obs_counts[left]
+            continue
+        if obs_mins[left] < obs_mins[right]:
+            assert obs_counts[node] == obs_counts[left]
+        elif obs_mins[right] < obs_mins[left]:
+            assert obs_counts[node] == obs_counts[right]
+        else:
+            assert obs_counts[node] == obs_counts[left] + obs_counts[right]
+
+
 def assert_bucket_summaries(B, expected_n_buckets):
     (beta,
      n_buckets,
@@ -238,6 +340,56 @@ def test_bucket_summaries_final_partial_bucket():
     n = ((1 << 15) + 2) // 2
     for builder in PATTERNS.values():
         assert_bucket_summaries(builder(n), 2)
+
+
+def test_rmm_mincount_metadata_tiny_tree():
+    for B in (
+        np.array([1, 0], dtype=np.uint8),
+        np.array([1, 1, 0, 0], dtype=np.uint8),
+    ):
+        assert_rmm_mincount_metadata(B)
+
+
+def test_rmm_mincount_metadata_patterns():
+    for n in (4, 32):
+        for builder in PATTERNS.values():
+            assert_rmm_mincount_metadata(builder(n))
+
+
+def test_rmm_mincount_metadata_final_partial_block():
+    n = ((1 << 15) + 50) // 2
+    for builder in PATTERNS.values():
+        assert_rmm_mincount_metadata(builder(n))
+
+
+def test_rmm_mincount_internal_relation_cases():
+    seen_equal = False
+    seen_left_smaller = False
+    seen_right_smaller = False
+
+    for B in (
+        flat_bits(4),
+        mixed_bits(4),
+        nested_bits(4),
+        random_bits(4, SEED),
+    ):
+        (_, _, n_internal, n_total, _, mins, counts) = rmm_metadata_reference(B)
+        del counts
+        for node in range(n_internal - 1, -1, -1):
+            left = (2 * node) + 1
+            right = left + 1
+            if right >= n_total:
+                continue
+            if mins[left] == mins[right]:
+                seen_equal = True
+            elif mins[left] < mins[right]:
+                seen_left_smaller = True
+            else:
+                seen_right_smaller = True
+
+    assert seen_equal
+    assert seen_left_smaller
+    assert seen_right_smaller
 
 
 def assert_bucket_tree_searches(B):

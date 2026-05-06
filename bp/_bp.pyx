@@ -495,6 +495,18 @@ def _test_bwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target):
     return _bwdsearch_in_range(self, lo, hi, target)
 
 
+def _test_get_rmm_mincount_metadata(BP self):
+    return (
+        self._rmm.b,
+        self._rmm.n_tip,
+        self._rmm.n_internal,
+        self._rmm.n_total,
+        self._rmm.height,
+        np.asarray(self._rmm.mM)[:, self._rmm.m_idx].copy(),
+        np.asarray(self._rmm.n).copy(),
+    )
+
+
 cdef void _rmq_find_best_middle_cover_node(BP self, SIZE_t query_left,
                                            SIZE_t query_right,
                                            SIZE_t* best_node,
@@ -643,6 +655,9 @@ cdef class mM:
         cdef int upper_limit  # the upper limit of the bucket a parenthesis is in
         cdef int min_ = 0 # m, absolute minimum for a blokc
         cdef int max_ = 0 # M, absolute maximum for a block
+        cdef int count_min = 0
+        cdef int left_min
+        cdef int right_min
         cdef int excess = 0 # e, absolute excess
         cdef int vbar
         cdef int r = 0
@@ -660,6 +675,7 @@ cdef class mM:
             # creation of a memoryview directly or via numpy requires the GIL:
             # http://stackoverflow.com/a/22238012
             self.mM = np.zeros((self.n_total, 2), dtype=SIZE)
+            self.n = np.zeros(self.n_total, dtype=SIZE)
             self.r = np.zeros(self.n_total, dtype=SIZE)
 
         # annoying, cannot do step in range if step is not known at runtime
@@ -674,6 +690,7 @@ cdef class mM:
             upper_limit = min(i + self.b, B_size)
             min_ = INT_MAX
             max_ = 0
+            count_min = 0
             
             self.r[offset + self.n_internal] = r 
             for j in range(lower_limit, upper_limit):
@@ -684,6 +701,9 @@ cdef class mM:
 
                 if excess < min_:
                     min_ = excess
+                    count_min = 1
+                elif excess == min_:
+                    count_min += 1
 
                 if excess > max_:
                     max_ = excess
@@ -692,6 +712,7 @@ cdef class mM:
             
             self.mM[offset + self.n_internal, self.m_idx] = min_
             self.mM[offset + self.n_internal, self.M_idx] = max_
+            self.n[offset + self.n_internal] = count_min
 
             i += self.b
 
@@ -713,11 +734,19 @@ cdef class mM:
                 elif rchild >= self.n_total:
                     self.mM[node, self.m_idx] = self.mM[lchild, self.m_idx] 
                     self.mM[node, self.M_idx] = self.mM[lchild, self.M_idx]
+                    self.n[node] = self.n[lchild]
                 else:    
-                    self.mM[node, self.m_idx] = min(self.mM[lchild, self.m_idx], 
-                                                    self.mM[rchild, self.m_idx])
+                    left_min = <int>self.mM[lchild, self.m_idx]
+                    right_min = <int>self.mM[rchild, self.m_idx]
+                    self.mM[node, self.m_idx] = min(left_min, right_min)
                     self.mM[node, self.M_idx] = max(self.mM[lchild, self.M_idx], 
                                                     self.mM[rchild, self.M_idx])
+                    if left_min < right_min:
+                        self.n[node] = self.n[lchild]
+                    elif right_min < left_min:
+                        self.n[node] = self.n[rchild]
+                    else:
+                        self.n[node] = self.n[lchild] + self.n[rchild]
 
                 self.r[node] = self.r[lchild] 
                     

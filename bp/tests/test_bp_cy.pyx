@@ -43,6 +43,19 @@ def get_range_search_results(np.ndarray[np.uint8_t, ndim=1] B,
     )
 
 
+def get_rmm_mincount_metadata(np.ndarray[np.uint8_t, ndim=1] B):
+    cdef BP obj = BP(B)
+    return (
+        obj._rmm.b,
+        obj._rmm.n_tip,
+        obj._rmm.n_internal,
+        obj._rmm.n_total,
+        obj._rmm.height,
+        np.asarray(obj._rmm.mM)[:, obj._rmm.m_idx].copy(),
+        np.asarray(obj._rmm.n).copy(),
+    )
+
+
 def test_rank():
     cdef BP obj = get_test_obj()
     counts_1 = fig1_B.cumsum()
