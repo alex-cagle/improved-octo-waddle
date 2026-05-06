@@ -142,6 +142,33 @@ def bucket_find_last_ref(bucket_m, bucket_M, lo_bucket, hi_bucket, target):
     return -1
 
 
+def excess_values(B):
+    excess = 0
+    values = []
+
+    for bit in B:
+        excess += -1 + (2 * int(bit))
+        values.append(excess)
+
+    return values
+
+
+def fwdsearch_in_range_ref(B, lo, hi, target):
+    excess = excess_values(B)
+    for pos in range(lo, hi + 1):
+        if excess[pos] == target:
+            return pos
+    return -1
+
+
+def bwdsearch_in_range_ref(B, lo, hi, target):
+    excess = excess_values(B)
+    for pos in range(hi, lo - 1, -1):
+        if excess[pos] == target:
+            return pos
+    return -1
+
+
 def assert_bucket_summaries(B, expected_n_buckets):
     (beta,
      n_buckets,
@@ -255,3 +282,67 @@ def test_bucket_tree_searches_final_partial_bucket():
     n = ((2 * (1 << 15)) + 14) // 2
     for builder in PATTERNS.values():
         assert_bucket_tree_searches(builder(n))
+
+
+def assert_range_searches(B):
+    size = len(B)
+    beta = 1 << 15
+    excess = excess_values(B)
+    queries = [
+        (0, 0),
+        (0, min(size - 1, 5)),
+        (max(0, (size // 2) - 1), min(size - 1, (size // 2) + 1)),
+        (0, size - 1),
+    ]
+
+    if size > 20:
+        queries.append((10, min(size - 1, 20)))
+
+    if size > beta + 10:
+        queries.append((beta - 5, beta + 5))
+
+    if size > (2 * beta):
+        queries.append((beta - 5, min(size - 1, (2 * beta) + 5)))
+
+    if size > beta:
+        queries.append((max(0, size - 12), size - 1))
+
+    seen = set()
+    deduped_queries = []
+    for lo, hi in queries:
+        key = (lo, hi)
+        if key not in seen:
+            seen.add(key)
+            deduped_queries.append(key)
+
+    for lo, hi in deduped_queries:
+        targets = {
+            excess[lo],
+            excess[hi],
+            excess[(lo + hi) // 2],
+            max(excess) + 1,
+        }
+
+        for target in sorted(targets):
+            exp_fwd = fwdsearch_in_range_ref(B, lo, hi, target)
+            exp_bwd = bwdsearch_in_range_ref(B, lo, hi, target)
+            obs_fwd, obs_bwd = tbc.get_range_search_results(B, lo, hi, target)
+            assert obs_fwd == exp_fwd
+            assert obs_bwd == exp_bwd
+
+
+def test_range_searches_one_bucket():
+    for builder in PATTERNS.values():
+        assert_range_searches(builder(64))
+
+
+def test_range_searches_multiple_buckets():
+    n = ((3 * (1 << 15)) + 50) // 2
+    for builder in PATTERNS.values():
+        assert_range_searches(builder(n))
+
+
+def test_range_searches_final_partial_bucket():
+    n = ((2 * (1 << 15)) + 14) // 2
+    for builder in PATTERNS.values():
+        assert_range_searches(builder(n))

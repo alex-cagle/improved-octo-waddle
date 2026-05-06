@@ -34,6 +34,15 @@ def get_bucket_tree_search_results(np.ndarray[np.uint8_t, ndim=1] B,
     )
 
 
+def get_range_search_results(np.ndarray[np.uint8_t, ndim=1] B,
+                             int lo, int hi, int target):
+    cdef BP obj = BP(B)
+    return (
+        bp_impl._test_fwdsearch_in_range(obj, lo, hi, target),
+        bp_impl._test_bwdsearch_in_range(obj, lo, hi, target),
+    )
+
+
 def test_rank():
     cdef BP obj = get_test_obj()
     counts_1 = fig1_B.cumsum()

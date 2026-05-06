@@ -214,6 +214,61 @@ cdef int _bucket_find_last_containing(BP self, int lo_bucket, int hi_bucket,
     )
 
 
+cdef int _fwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target) nogil:
+    cdef int first_block
+    cdef int last_block
+    cdef int k
+    cdef int leaf
+    cdef int start_i
+    cdef int result
+
+    if lo > hi or hi >= self.size:
+        return -1
+
+    first_block = lo // self._rmm.b
+    last_block = hi // self._rmm.b
+    start_i = <int>lo - 1
+
+    for k in range(first_block, last_block + 1):
+        leaf = self._rmm.n_internal + k
+        if self._rmm.mM[leaf, self._rmm.m_idx] <= target <= self._rmm.mM[leaf, self._rmm.M_idx]:
+            result = _scan_block_forward_rmm(self, start_i, k, target)
+            if result != -1 and result <= hi:
+                return result
+
+    return -1
+
+
+cdef int _bwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target) nogil:
+    cdef int first_block
+    cdef int last_block
+    cdef int k
+    cdef int leaf
+    cdef int start_i
+    cdef int result
+
+    if lo > hi or hi >= self.size:
+        return -1
+
+    if lo == 0 and hi == 0:
+        if _excess_from_block_seed(self, 0) == target:
+            return 0
+        return -1
+
+    first_block = lo // self._rmm.b
+    last_block = hi // self._rmm.b
+    start_i = <int>hi + 1
+
+    for k in range(last_block, first_block - 1, -1):
+        leaf = self._rmm.n_internal + k
+        if self._rmm.mM[leaf, self._rmm.m_idx] <= target <= self._rmm.mM[leaf, self._rmm.M_idx]:
+            result = _scan_block_backward_rmm(self, start_i, k, target)
+            if result != -1 and result >= lo:
+                return result
+
+    return -1
+
+
 cdef inline SIZE_t _rmq_scan_range(BP self, SIZE_t lo, SIZE_t hi, int* min_v) nogil:
     cdef SIZE_t pos
     cdef SIZE_t min_k
@@ -258,6 +313,14 @@ def _test_bucket_find_first_containing(BP self, int lo_bucket, int hi_bucket,
 def _test_bucket_find_last_containing(BP self, int lo_bucket, int hi_bucket,
                                       int target):
     return _bucket_find_last_containing(self, lo_bucket, hi_bucket, target)
+
+
+def _test_fwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target):
+    return _fwdsearch_in_range(self, lo, hi, target)
+
+
+def _test_bwdsearch_in_range(BP self, SIZE_t lo, SIZE_t hi, int target):
+    return _bwdsearch_in_range(self, lo, hi, target)
 
 
 cdef void _rmq_find_best_middle_cover_node(BP self, SIZE_t query_left,
