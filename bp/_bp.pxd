@@ -32,9 +32,12 @@ cdef class BP:
         BOOL_t* _b_ptr
         int beta
         int n_buckets
+        int bucket_tree_base
         SIZE_t[:] bucket_e
         SIZE_t[:] bucket_m
         SIZE_t[:] bucket_M
+        SIZE_t[:] bucket_tree_m
+        SIZE_t[:] bucket_tree_M
         SIZE_t[:] _k_index_0
         SIZE_t[:] _k_index_1
         np.ndarray _names

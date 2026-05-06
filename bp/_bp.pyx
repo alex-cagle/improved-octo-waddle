@@ -436,6 +436,8 @@ cdef class BP:
         cdef SIZE_t[:] bucket_e
         cdef SIZE_t[:] bucket_m
         cdef SIZE_t[:] bucket_M
+        cdef SIZE_t[:] bucket_tree_m
+        cdef SIZE_t[:] bucket_tree_M
         cdef np.ndarray[object, ndim=1] _names
         cdef np.ndarray[DOUBLE_t, ndim=1] _lengths
         cdef np.ndarray[INT32_t, ndim=1] _edges
@@ -443,6 +445,9 @@ cdef class BP:
         cdef int excess
         cdef int bucket_min
         cdef int bucket_max
+        cdef int node
+        cdef int left
+        cdef int right
 
         # the tree is only valid if it is balanaced
         assert B.sum() == (float(B.size) / 2)
@@ -451,10 +456,15 @@ cdef class BP:
         self.size = B.size
         self.beta = BUCKET_SIZE
         self.n_buckets = max(1, <int>ceil(self.size / <double> self.beta))
+        self.bucket_tree_base = 1
+        while self.bucket_tree_base < self.n_buckets:
+            self.bucket_tree_base *= 2
 
         bucket_e = np.zeros(self.n_buckets, dtype=SIZE)
         bucket_m = np.zeros(self.n_buckets, dtype=SIZE)
         bucket_M = np.zeros(self.n_buckets, dtype=SIZE)
+        bucket_tree_m = np.full(2 * self.bucket_tree_base, INT_MAX, dtype=SIZE)
+        bucket_tree_M = np.zeros(2 * self.bucket_tree_base, dtype=SIZE)
 
         excess = 0
         for bucket_idx in range(self.n_buckets):
@@ -473,10 +483,20 @@ cdef class BP:
             bucket_e[bucket_idx] = excess
             bucket_m[bucket_idx] = bucket_min
             bucket_M[bucket_idx] = bucket_max
+            bucket_tree_m[self.bucket_tree_base + bucket_idx] = bucket_min
+            bucket_tree_M[self.bucket_tree_base + bucket_idx] = bucket_max
+
+        for node in range(self.bucket_tree_base - 1, 0, -1):
+            left = 2 * node
+            right = left + 1
+            bucket_tree_m[node] = min(bucket_tree_m[left], bucket_tree_m[right])
+            bucket_tree_M[node] = max(bucket_tree_M[left], bucket_tree_M[right])
 
         self.bucket_e = bucket_e
         self.bucket_m = bucket_m
         self.bucket_M = bucket_M
+        self.bucket_tree_m = bucket_tree_m
+        self.bucket_tree_M = bucket_tree_M
 
         self._rmm = mM(B, B.size)
 
@@ -1407,49 +1427,53 @@ cdef class BP:
             The index of the result, or -1 if no result was found
         """
         cdef int k  # the block being interrogated
+        cdef int last_block
+        cdef int bucket_k
+        cdef int bucket_b
+        cdef int first_block
+        cdef int leaf
         cdef int result = -1 # the result of a scan within a block
-        cdef int node  # the node within the binary tree being examined
+        cdef int bucket_end
+        cdef int block_end
+        cdef int bucket_start
         
         # get the block of parentheses to check
         k = i // self._rmm.b  
+        bucket_k = i // self.beta
 
         # desired excess
         d += _excess_from_block_seed(self, i)
 
-        # determine which node our block corresponds too
-        node = bt_node_from_left(k, self._rmm.height)
-        
-        # see if our result is in our current block
-        if self._rmm.mM[node, self._rmm.m_idx] <= d <= self._rmm.mM[node, self._rmm.M_idx]:
-            result = _scan_block_forward_rmm(self, i, k, d)
-        
-        # if we do not have a result, we need to begin traversal of the tree
-        if result == -1:
-            # walk up the tree
-            while not bt_is_root(node):
-                if bt_is_left_child(node):
-                    node = bt_right_sibling(node)
-                    if self._rmm.mM[node, self._rmm.m_idx] <= d  <= self._rmm.mM[node, self._rmm.M_idx]:
-                        break
-                node = bt_parent(node)
-            
-            if bt_is_root(node):
-                return -1
+        bucket_end = min((bucket_k + 1) * self.beta, self.size) - 1
+        last_block = bucket_end // self._rmm.b
 
-            # descend until we hit a leaf node
-            while not bt_is_leaf(node, self._rmm.height):
-                node = bt_left_child(node)
+        # first search strictly after i within the current bucket using rmM
+        # leaf blocks, preserving the i + 1 lower bound on the first block.
+        for first_block in range(k, last_block + 1):
+            leaf = self._rmm.n_internal + first_block
+            if self._rmm.mM[leaf, self._rmm.m_idx] <= d <= self._rmm.mM[leaf, self._rmm.M_idx]:
+                result = _scan_block_forward_rmm(self, i, first_block, d)
+                if result != -1 and result <= bucket_end:
+                    return result
 
-                # evaluate right, if not found, pick left
-                if not (self._rmm.mM[node, self._rmm.m_idx] <= d <= self._rmm.mM[node, self._rmm.M_idx]):
-                    node = bt_right_sibling(node)
+        # then search later buckets left-to-right using bucket min/max summaries
+        for bucket_b in range(bucket_k + 1, self.n_buckets):
+            if d < self.bucket_m[bucket_b] or d > self.bucket_M[bucket_b]:
+                continue
 
-            # we have found a block with contains our solution. convert from the
-            # node index back into the block index
-            k = node - <int>(pow(2, self._rmm.height) - 1)
+            bucket_start = bucket_b * self.beta
+            bucket_end = min((bucket_b + 1) * self.beta, self.size) - 1
+            first_block = bucket_start // self._rmm.b
+            last_block = bucket_end // self._rmm.b
 
-            # scan for a result using the original d
-            result = _scan_block_forward_rmm(self, i, k, d)
+            for k in range(first_block, last_block + 1):
+                leaf = self._rmm.n_internal + k
+                if self._rmm.mM[leaf, self._rmm.m_idx] <= d <= self._rmm.mM[leaf, self._rmm.M_idx]:
+                    result = _scan_block_forward_rmm(self, bucket_start - 1, k, d)
+                    if result != -1:
+                        block_end = min((k + 1) * self._rmm.b, self.size) - 1
+                        if bucket_start <= result <= min(bucket_end, block_end):
+                            return result
 
         return result
 

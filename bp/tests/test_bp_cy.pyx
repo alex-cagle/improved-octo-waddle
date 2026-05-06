@@ -16,9 +16,12 @@ def get_bucket_summaries(np.ndarray[np.uint8_t, ndim=1] B):
     cdef BP obj = BP(B)
     return (obj.beta,
             obj.n_buckets,
+            obj.bucket_tree_base,
             np.asarray(obj.bucket_e),
             np.asarray(obj.bucket_m),
-            np.asarray(obj.bucket_M))
+            np.asarray(obj.bucket_M),
+            np.asarray(obj.bucket_tree_m),
+            np.asarray(obj.bucket_tree_M))
 
 
 def test_rank():
